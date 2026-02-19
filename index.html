@@ -3,107 +3,171 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Auto Measure</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <title>Mechanical AI Measure - Fixed</title>
     <style>
         body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; }
+        #container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        .view { position: relative; flex: 1; background: #000; overflow: hidden; }
         video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        .overlay { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
-                   background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; text-align: center; width: 80%; }
-        .btn-switch { background: #0070f3; color: white; border: none; padding: 10px; border-radius: 5px; margin-top: 10px; }
+        .ui { background: #1a1a1a; padding: 20px; text-align: center; border-top: 2px solid #333; }
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: red; margin-right: 5px; }
+        .btn { background: #0070f3; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; margin: 5px; }
+        .log { font-size: 12px; color: #aaa; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
-    <div id="container">
+<div id="container">
+    <div class="view">
         <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-        
-        <div class="overlay">
-            <div id="info">Sedang memuat AI...</div>
-            <button class="btn-switch" onclick="switchCamera()">🔄 Ganti Kamera</button>
-        </div>
+        <canvas id="canvasOutput"></canvas>
     </div>
 
-    <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const info = document.getElementById('info');
-        
-        let model;
-        let currentFacingMode = 'environment';
-        let pixelsPerMm = null;
-        const REF_REAL_WIDTH = 85.6; // Lebar kartu standar dalam mm
+    <div class="ui">
+        <div class="log"><span id="dot" class="status-dot"></span> <span id="msg">Memuat Library OpenCV (Mohon Tunggu)...</span></div>
+        <div id="measure-info" style="margin-bottom: 10px; font-weight: bold; color: #00ff00;"></div>
+        <button class="btn" onclick="switchCamera()">🔄 Ganti Kamera</button>
+        <button class="btn" style="background: #444;" onclick="resetCalib()">Reset Kalibrasi</button>
+    </div>
+</div>
 
-        async function setupApp() {
-            info.innerText = "Memuat Model AI...";
-            model = await cocoSsd.load();
+<script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="checkCV()"></script>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvasOutput');
+    const ctx = canvas.getContext('2d');
+    const msg = document.getElementById('msg');
+    const dot = document.getElementById('dot');
+    const measureInfo = document.getElementById('measure-info');
+
+    let cvReady = false;
+    let pixelsPerMm = null;
+    let points = [];
+    let currentFacingMode = 'environment';
+
+    // 1. Cek Kesiapan OpenCV
+    function checkCV() {
+        if (typeof cv !== 'undefined' && cv.Mat) {
+            cvReady = true;
+            dot.style.background = '#00ff00';
+            msg.innerText = "Sistem Siap! Kalibrasi dulu dengan klik 2 titik kartu.";
             startCamera();
+        } else {
+            setTimeout(checkCV, 500);
         }
+    }
 
-        async function startCamera() {
-            if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    // 2. Akses Kamera
+    async function startCamera() {
+        try {
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: currentFacingMode }
+                video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
             });
             video.srcObject = stream;
-            video.onloadeddata = () => predict();
+            video.play();
+            requestAnimationFrame(processLoop);
+        } catch (e) {
+            msg.innerText = "Kamera Error: " + e.message;
+        }
+    }
+
+    function switchCamera() {
+        currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
+        startCamera();
+    }
+
+    function resetCalib() {
+        pixelsPerMm = null;
+        points = [];
+        measureInfo.innerText = "";
+        msg.innerText = "Kalibrasi Ulang: Klik 2 titik ujung kartu.";
+    }
+
+    // 3. Interaksi Klik
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+        if (!pixelsPerMm) {
+            points.push({x, y});
+            if (points.length === 2) {
+                const d = Math.sqrt(Math.pow(points[1].x - points[0].x, 2) + Math.pow(points[1].y - points[0].y, 2));
+                pixelsPerMm = d / 85.6; // Pakai standar kartu ATM 85.6mm
+                msg.innerText = "Terkalibrasi! Arahkan ke benda lingkaran.";
+                points = [];
+            }
+        }
+    });
+
+    // 4. Processing Loop (Inti Deteksi)
+    function processLoop() {
+        if (!cvReady || !video.videoWidth) {
+            requestAnimationFrame(processLoop);
+            return;
         }
 
-        function switchCamera() {
-            currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-            startCamera();
-        }
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
 
-        async function predict() {
-            const predictions = await model.detect(video);
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+        let gray = new cv.Mat();
+        let circles = new cv.Mat();
+        let cap = new cv.VideoCapture(video);
 
-            // 1. Cari Referensi Dulu (Misal kartu/dompet/hp)
-            // Di COCO-SSD, kartu sering terdeteksi sebagai 'book' atau 'cell phone'
-            predictions.forEach(p => {
-                if (p.class === 'book' || p.class === 'cell phone') {
-                    const pixelWidth = p.bbox[2];
-                    pixelsPerMm = pixelWidth / REF_REAL_WIDTH;
-                }
-            });
+        try {
+            cap.read(src);
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.medianBlur(gray, gray, 5);
 
-            // 2. Gambar dan Ukur Semua Benda yang Terdeteksi
-            predictions.forEach(p => {
-                const [x, y, width, height] = p.bbox;
-                
-                // Gambar Box
-                ctx.strokeStyle = pixelsPerMm ? "#00FF00" : "#FF0000";
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x, y, width, height);
+            // Hough Circles: Param 75 & 40 adalah sensitivitas (bisa diatur)
+            cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 50, 75, 40, 10, 300);
 
-                // Hitung Dimensi
-                let label = p.class;
+            // Gambar Video Asli
+            cv.imshow('canvasOutput', src);
+
+            // Gambar Hasil Deteksi
+            for (let i = 0; i < circles.cols; ++i) {
+                let x = circles.data32F[i * 3];
+                let y = circles.data32F[i * 3 + 1];
+                let r = circles.data32F[i * 3 + 2];
+
+                // Gambar Lingkaran Hijau
+                ctx.strokeStyle = "#00ff00";
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, 2 * Math.PI);
+                ctx.stroke();
+
                 if (pixelsPerMm) {
-                    const wmm = (width / pixelsPerMm).toFixed(1);
-                    const hmm = (height / pixelsPerMm).toFixed(1);
-                    label += ` ${wmm}x${hmm} mm`;
-                    info.innerText = "Sistem Aktif: Mengukur Otomatis";
-                } else {
-                    info.innerText = "Letakkan Kartu ATM sebagai referensi ukuran";
+                    const dMm = ((r * 2) / pixelsPerMm).toFixed(2);
+                    const rMm = (r / pixelsPerMm).toFixed(2);
+                    
+                    ctx.fillStyle = "#00ff00";
+                    ctx.font = "bold 35px Arial";
+                    ctx.fillText(`D: ${dMm}mm`, x + r + 10, y);
+                    ctx.fillText(`R: ${rMm}mm`, x + r + 10, y + 40);
+                    measureInfo.innerText = `Terdeteksi: Diameter ${dMm} mm`;
                 }
+            }
 
-                // Gambar Label
-                ctx.fillStyle = ctx.strokeStyle;
-                ctx.font = "bold 25px Arial";
-                ctx.fillText(label, x, y > 30 ? y - 10 : 30);
+            // Visualisasi titik kalibrasi
+            points.forEach(p => {
+                ctx.fillStyle = "yellow";
+                ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill();
             });
 
-            requestAnimationFrame(predict);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            // Bersihkan memori OpenCV agar tidak crash
+            src.delete(); gray.delete(); circles.delete();
         }
 
-        setupApp();
-    </script>
+        requestAnimationFrame(processLoop);
+    }
+</script>
+
 </body>
 </html>
