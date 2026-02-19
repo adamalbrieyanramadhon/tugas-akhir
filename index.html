@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mechanical AI Measure - Fixed</title>
+    <title>Mechanical Measure Pro</title>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="checkCV()"></script>
     <style>
         body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
         #container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
-        .view { position: relative; flex: 1; background: #000; overflow: hidden; }
         video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        .ui { background: #1a1a1a; padding: 20px; text-align: center; border-top: 2px solid #333; }
-        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: red; margin-right: 5px; }
-        .btn { background: #0070f3; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; margin: 5px; }
-        .log { font-size: 12px; color: #aaa; margin-bottom: 10px; }
+        .view { position: relative; flex: 1; }
+        .ui { background: #111; padding: 15px; text-align: center; border-top: 2px solid #333; z-index: 100; }
+        .btn { background: #0070f3; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px; }
+        #info { color: #00ff00; font-size: 14px; margin-bottom: 5px; }
     </style>
 </head>
 <body>
@@ -22,54 +22,39 @@
         <video id="video" autoplay playsinline muted></video>
         <canvas id="canvasOutput"></canvas>
     </div>
-
     <div class="ui">
-        <div class="log"><span id="dot" class="status-dot"></span> <span id="msg">Memuat Library OpenCV (Mohon Tunggu)...</span></div>
-        <div id="measure-info" style="margin-bottom: 10px; font-weight: bold; color: #00ff00;"></div>
+        <div id="info">Memuat OpenCV...</div>
         <button class="btn" onclick="switchCamera()">🔄 Ganti Kamera</button>
-        <button class="btn" style="background: #444;" onclick="resetCalib()">Reset Kalibrasi</button>
+        <button class="btn" style="background:#555" onclick="reset()">Reset</button>
     </div>
 </div>
-
-<script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="checkCV()"></script>
 
 <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvasOutput');
     const ctx = canvas.getContext('2d');
-    const msg = document.getElementById('msg');
-    const dot = document.getElementById('dot');
-    const measureInfo = document.getElementById('measure-info');
-
+    const info = document.getElementById('info');
+    
     let cvReady = false;
     let pixelsPerMm = null;
     let points = [];
     let currentFacingMode = 'environment';
 
-    // 1. Cek Kesiapan OpenCV
     function checkCV() {
         if (typeof cv !== 'undefined' && cv.Mat) {
             cvReady = true;
-            dot.style.background = '#00ff00';
-            msg.innerText = "Sistem Siap! Kalibrasi dulu dengan klik 2 titik kartu.";
+            info.innerText = "Siap. Klik 2 ujung kartu untuk kalibrasi.";
             startCamera();
-        } else {
-            setTimeout(checkCV, 500);
-        }
+        } else { setTimeout(checkCV, 500); }
     }
 
-    // 2. Akses Kamera
     async function startCamera() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
-            });
-            video.srcObject = stream;
-            video.play();
-            requestAnimationFrame(processLoop);
-        } catch (e) {
-            msg.innerText = "Kamera Error: " + e.message;
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: currentFacingMode, width: 1280, height: 720 }
+        });
+        video.srcObject = stream;
+        video.play();
+        requestAnimationFrame(process);
     }
 
     function switchCamera() {
@@ -77,40 +62,26 @@
         startCamera();
     }
 
-    function resetCalib() {
-        pixelsPerMm = null;
-        points = [];
-        measureInfo.innerText = "";
-        msg.innerText = "Kalibrasi Ulang: Klik 2 titik ujung kartu.";
-    }
+    function reset() { pixelsPerMm = null; points = []; info.innerText = "Kalibrasi Ulang."; }
 
-    // 3. Interaksi Klik
     canvas.addEventListener('click', (e) => {
+        if (pixelsPerMm) return;
         const rect = canvas.getBoundingClientRect();
         const x = (e.clientX - rect.left) * (canvas.width / rect.width);
         const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-        if (!pixelsPerMm) {
-            points.push({x, y});
-            if (points.length === 2) {
-                const d = Math.sqrt(Math.pow(points[1].x - points[0].x, 2) + Math.pow(points[1].y - points[0].y, 2));
-                pixelsPerMm = d / 85.6; // Pakai standar kartu ATM 85.6mm
-                msg.innerText = "Terkalibrasi! Arahkan ke benda lingkaran.";
-                points = [];
-            }
+        points.push({x, y});
+        if (points.length === 2) {
+            const d = Math.sqrt(Math.pow(points[1].x-points[0].x,2)+Math.pow(points[1].y-points[0].y,2));
+            pixelsPerMm = d / 85.6;
+            info.innerText = "Terkalibrasi! Arahkan ke benda bulat.";
         }
     });
 
-    // 4. Processing Loop (Inti Deteksi)
-    function processLoop() {
-        if (!cvReady || !video.videoWidth) {
-            requestAnimationFrame(processLoop);
-            return;
-        }
-
+    function process() {
+        if (!cvReady || !video.videoWidth) { requestAnimationFrame(process); return; }
+        
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-
         let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
         let gray = new cv.Mat();
         let circles = new cv.Mat();
@@ -119,21 +90,21 @@
         try {
             cap.read(src);
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            cv.medianBlur(gray, gray, 5);
+            
+            // 1. Tambahkan Gaussian Blur agar noise keyboard berkurang
+            cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 2, 2);
 
-            // Hough Circles: Param 75 & 40 adalah sensitivitas (bisa diatur)
-            cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 50, 75, 40, 10, 300);
+            // 2. HoughCircles dengan parameter yang lebih longgar
+            // param1: threshold Canny (tepi), param2: threshold deteksi pusat
+            cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 40, 100, 30, 10, 400);
 
-            // Gambar Video Asli
             cv.imshow('canvasOutput', src);
 
-            // Gambar Hasil Deteksi
             for (let i = 0; i < circles.cols; ++i) {
                 let x = circles.data32F[i * 3];
                 let y = circles.data32F[i * 3 + 1];
                 let r = circles.data32F[i * 3 + 2];
 
-                // Gambar Lingkaran Hijau
                 ctx.strokeStyle = "#00ff00";
                 ctx.lineWidth = 5;
                 ctx.beginPath();
@@ -141,33 +112,23 @@
                 ctx.stroke();
 
                 if (pixelsPerMm) {
-                    const dMm = ((r * 2) / pixelsPerMm).toFixed(2);
-                    const rMm = (r / pixelsPerMm).toFixed(2);
-                    
+                    let d = ((r * 2) / pixelsPerMm).toFixed(2);
                     ctx.fillStyle = "#00ff00";
-                    ctx.font = "bold 35px Arial";
-                    ctx.fillText(`D: ${dMm}mm`, x + r + 10, y);
-                    ctx.fillText(`R: ${rMm}mm`, x + r + 10, y + 40);
-                    measureInfo.innerText = `Terdeteksi: Diameter ${dMm} mm`;
+                    ctx.font = "bold 40px Arial";
+                    ctx.fillText(`D: ${d}mm`, x - 50, y);
                 }
             }
-
-            // Visualisasi titik kalibrasi
+            
             points.forEach(p => {
                 ctx.fillStyle = "yellow";
                 ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill();
             });
 
-        } catch (e) {
-            console.error(e);
-        } finally {
-            // Bersihkan memori OpenCV agar tidak crash
-            src.delete(); gray.delete(); circles.delete();
-        }
-
-        requestAnimationFrame(processLoop);
+        } catch (e) { console.log(e); }
+        finally { src.delete(); gray.delete(); circles.delete(); }
+        
+        requestAnimationFrame(process);
     }
 </script>
-
 </body>
 </html>
