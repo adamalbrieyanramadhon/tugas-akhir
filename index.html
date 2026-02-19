@@ -3,29 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mechanical Measure Pro</title>
+    <title>AI Measure Ultra</title>
     <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="checkCV()"></script>
     <style>
         body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        #container { position: relative; width: 100vw; height: 100vh; }
         video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        .view { position: relative; flex: 1; }
-        .ui { background: #111; padding: 15px; text-align: center; border-top: 2px solid #333; z-index: 100; }
+        .ui { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
+               background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; text-align: center; width: 85%; }
         .btn { background: #0070f3; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px; }
-        #info { color: #00ff00; font-size: 14px; margin-bottom: 5px; }
     </style>
 </head>
 <body>
 
 <div id="container">
-    <div class="view">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvasOutput"></canvas>
-    </div>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvasOutput"></canvas>
     <div class="ui">
-        <div id="info">Memuat OpenCV...</div>
-        <button class="btn" onclick="switchCamera()">🔄 Ganti Kamera</button>
-        <button class="btn" style="background:#555" onclick="reset()">Reset</button>
+        <div id="info" style="color:#0f0">Menghubungkan AI...</div>
+        <button class="btn" onclick="switchCamera()">Ganti Kamera</button>
+        <button class="btn" style="background:#444" onclick="reset()">Reset</button>
     </div>
 </div>
 
@@ -35,33 +32,18 @@
     const ctx = canvas.getContext('2d');
     const info = document.getElementById('info');
     
-    let cvReady = false;
-    let pixelsPerMm = null;
-    let points = [];
-    let currentFacingMode = 'environment';
+    let cvReady = false, pixelsPerMm = null, points = [], currentFacingMode = 'environment';
 
-    function checkCV() {
-        if (typeof cv !== 'undefined' && cv.Mat) {
-            cvReady = true;
-            info.innerText = "Siap. Klik 2 ujung kartu untuk kalibrasi.";
-            startCamera();
-        } else { setTimeout(checkCV, 500); }
-    }
+    function checkCV() { if (typeof cv !== 'undefined' && cv.Mat) { cvReady = true; info.innerText = "Klik 2 titik kartu untuk kalibrasi"; startCamera(); } else { setTimeout(checkCV, 500); } }
 
     async function startCamera() {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: currentFacingMode, width: 1280, height: 720 }
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode, width: 1280, height: 720 } });
         video.srcObject = stream;
         video.play();
         requestAnimationFrame(process);
     }
 
-    function switchCamera() {
-        currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-        startCamera();
-    }
-
+    function switchCamera() { currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user'; startCamera(); }
     function reset() { pixelsPerMm = null; points = []; info.innerText = "Kalibrasi Ulang."; }
 
     canvas.addEventListener('click', (e) => {
@@ -73,15 +55,15 @@
         if (points.length === 2) {
             const d = Math.sqrt(Math.pow(points[1].x-points[0].x,2)+Math.pow(points[1].y-points[0].y,2));
             pixelsPerMm = d / 85.6;
-            info.innerText = "Terkalibrasi! Arahkan ke benda bulat.";
+            info.innerText = "Terkalibrasi! Dekatkan ke benda.";
         }
     });
 
     function process() {
         if (!cvReady || !video.videoWidth) { requestAnimationFrame(process); return; }
-        
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
+        
         let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
         let gray = new cv.Mat();
         let circles = new cv.Mat();
@@ -91,42 +73,30 @@
             cap.read(src);
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
             
-            // 1. Tambahkan Gaussian Blur agar noise keyboard berkurang
+            // --- OPTIMASI BARU ---
+            // Meningkatkan kontras agar benda putih di lantai putih terlihat
+            let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+            clahe.apply(gray, gray);
             cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 2, 2);
 
-            // 2. HoughCircles dengan parameter yang lebih longgar
-            // param1: threshold Canny (tepi), param2: threshold deteksi pusat
-            cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 40, 100, 30, 10, 400);
+            // Parameter diturunkan (30 -> 20) agar lebih sensitif mendeteksi lingkaran samar
+            cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 50, 100, 20, 10, 500);
 
             cv.imshow('canvasOutput', src);
 
             for (let i = 0; i < circles.cols; ++i) {
-                let x = circles.data32F[i * 3];
-                let y = circles.data32F[i * 3 + 1];
-                let r = circles.data32F[i * 3 + 2];
-
-                ctx.strokeStyle = "#00ff00";
-                ctx.lineWidth = 5;
-                ctx.beginPath();
-                ctx.arc(x, y, r, 0, 2 * Math.PI);
-                ctx.stroke();
+                let x = circles.data32F[i * 3], y = circles.data32F[i * 3 + 1], r = circles.data32F[i * 3 + 2];
+                ctx.strokeStyle = "#00ff00"; ctx.lineWidth = 6;
+                ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
 
                 if (pixelsPerMm) {
                     let d = ((r * 2) / pixelsPerMm).toFixed(2);
-                    ctx.fillStyle = "#00ff00";
-                    ctx.font = "bold 40px Arial";
-                    ctx.fillText(`D: ${d}mm`, x - 50, y);
+                    ctx.fillStyle = "#00ff00"; ctx.font = "bold 50px Arial";
+                    ctx.fillText(`${d} mm`, x - 60, y);
                 }
             }
-            
-            points.forEach(p => {
-                ctx.fillStyle = "yellow";
-                ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill();
-            });
-
-        } catch (e) { console.log(e); }
-        finally { src.delete(); gray.delete(); circles.delete(); }
-        
+            points.forEach(p => { ctx.fillStyle = "yellow"; ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill(); });
+        } catch (e) {} finally { src.delete(); gray.delete(); circles.delete(); }
         requestAnimationFrame(process);
     }
 </script>
