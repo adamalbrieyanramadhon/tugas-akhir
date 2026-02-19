@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Mechanical Measure - Diameter</title>
-    <script async src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
+    <title>AI Measure - Fixed Version</title>
+    <script src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
     <style>
         body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
         #container { position: relative; width: 100vw; height: 100vh; }
@@ -12,32 +12,24 @@
         .overlay { 
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
             background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; 
-            text-align: center; width: 85%; z-index: 10;
+            text-align: center; width: 85%; z-index: 100;
         }
-        .btn-switch { background: #0070f3; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
-        .status-badge {
-            position: absolute; top: 20px; left: 20px; background: rgba(0,255,0,0.2);
-            padding: 10px; border-radius: 8px; border: 1px solid #0f0; font-size: 12px;
-        }
+        .btn { background: #0070f3; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; margin: 2px; }
+        #status-label { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; font-size: 12px; }
     </style>
 </head>
 <body>
 
     <div id="container">
-        <div class="status-badge" id="stats">
-            Status: Menunggu OpenCV...<br>
-            Px/mm: <span id="pxmmVal">N/A</span>
-        </div>
-        
+        <div id="status-label">Memuat Sistem...</div>
         <video id="video" autoplay playsinline muted></video>
         <canvas id="canvasOutput"></canvas>
         
         <div class="overlay">
-            <div id="info">Klik 2 titik pada benda referensi (misal: kartu) untuk kalibrasi awal</div>
+            <div id="info">Menunggu OpenCV...</div>
             <div style="margin-top: 10px;">
-                <input type="number" id="refSize" value="85.6" style="width: 50px; padding: 5px;"> mm
-                <button class="btn-switch" onclick="switchCamera()">🔄 Ganti Kamera</button>
-                <button class="btn-switch" style="background: #f44336;" onclick="resetCalibration()">Reset</button>
+                <button class="btn" onclick="switchCamera()">🔄 Ganti Kamera</button>
+                <button class="btn" onclick="resetAll()" style="background:#444;">Reset</button>
             </div>
         </div>
     </div>
@@ -47,124 +39,130 @@
         const canvas = document.getElementById('canvasOutput');
         const ctx = canvas.getContext('2d');
         const info = document.getElementById('info');
-        
-        let currentFacingMode = 'environment';
-        let pixelsPerMm = null;
-        let points = []; // Untuk kalibrasi manual
+        const statusLabel = document.getElementById('status-label');
 
-        async function startCamera() {
-            if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
-            });
-            video.srcObject = stream;
+        let pixelsPerMm = null;
+        let points = [];
+        let currentFacingMode = 'environment';
+        let src, gray, circles;
+
+        // 1. Inisialisasi Kamera
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: currentFacingMode, width: 1280, height: 720 }
+                });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    startProcessing();
+                };
+            } catch (err) {
+                info.innerText = "Error Kamera: " + err.message;
+            }
         }
 
         function switchCamera() {
             currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-            startCamera();
+            initCamera();
         }
 
-        function resetCalibration() {
-            pixelsPerMm = null;
+        function resetAll() {
             points = [];
-            document.getElementById('pxmmVal').innerText = "N/A";
-            info.innerText = "Kalibrasi direset. Klik 2 titik benda referensi.";
+            pixelsPerMm = null;
+            info.innerText = "Klik 2 titik kartu untuk kalibrasi.";
         }
 
-        // Kalibrasi Manual Jarak
+        // 2. Logika Hitung Sudut & Kalibrasi
         canvas.addEventListener('click', (e) => {
-            if (pixelsPerMm) return; // Jika sudah kalibrasi, abaikan klik
-            
             const rect = canvas.getBoundingClientRect();
             const x = (e.clientX - rect.left) * (canvas.width / rect.width);
             const y = (e.clientY - rect.top) * (canvas.height / rect.height);
             
             points.push({x, y});
-            
-            if (points.length === 2) {
-                const distPx = Math.sqrt(Math.pow(points[1].x - points[0].x, 2) + Math.pow(points[1].y - points[0].y, 2));
-                pixelsPerMm = distPx / parseFloat(document.getElementById('refSize').value);
-                document.getElementById('pxmmVal').innerText = pixelsPerMm.toFixed(2);
-                info.innerText = "Kalibrasi Berhasil! Mengukur diameter otomatis...";
+
+            if (!pixelsPerMm && points.length === 2) {
+                // Kalibrasi menggunakan lebar kartu standar (85.6mm)
+                const d = Math.sqrt(Math.pow(points[1].x - points[0].x, 2) + Math.pow(points[1].y - points[0].y, 2));
+                pixelsPerMm = d / 85.6;
+                info.innerText = "Kalibrasi OK. Sekarang mengukur otomatis.";
+                points = [];
+            } else if (points.length === 3) {
+                // Hitung Sudut jika sudah ada 3 titik
+                const angle = calculateAngle(points[0], points[1], points[2]);
+                alert("Sudut terukur: " + angle.toFixed(2) + "°");
                 points = [];
             }
         });
 
-        function processFrame() {
-            if (!cv.Mat) { setTimeout(processFrame, 100); return; }
+        function calculateAngle(p1, p2, p3) {
+            const a = Math.pow(p2.x-p1.x,2) + Math.pow(p2.y-p1.y,2);
+            const b = Math.pow(p2.x-p3.x,2) + Math.pow(p2.y-p3.y,2);
+            const c = Math.pow(p3.x-p1.x,2) + Math.pow(p3.y-p1.y,2);
+            return Math.acos( (a+b-c) / Math.sqrt(4*a*b) ) * (180 / Math.PI);
+        }
 
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+        // 3. Loop Pemrosesan Utama
+        function startProcessing() {
+            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            gray = new cv.Mat();
+            circles = new cv.Mat();
             
-            let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-            let gray = new cv.Mat();
-            let cap = new cv.VideoCapture(video);
+            const cap = new cv.VideoCapture(video);
 
-            function loop() {
+            function process() {
                 try {
                     cap.read(src);
                     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                    // Blur untuk mengurangi noise pada benda kerja logam
                     cv.medianBlur(gray, gray, 5);
 
-                    let circles = new cv.Mat();
-                    // Algoritma Hough Circles untuk deteksi lubang/lingkaran
-                    cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 45, 75, 40, 0, 0);
+                    // Deteksi Lingkaran Otomatis
+                    cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 50, 80, 40, 10, 200);
 
+                    // Render ke Canvas
                     cv.imshow('canvasOutput', src);
 
-                    // Gambar titik kalibrasi jika sedang dilakukan
-                    points.forEach(p => {
-                        ctx.fillStyle = "yellow";
-                        ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI*2); ctx.fill();
-                    });
-
-                    // Looping setiap lingkaran yang ditemukan
+                    // Gambar hasil deteksi
                     for (let i = 0; i < circles.cols; ++i) {
                         let x = circles.data32F[i * 3];
                         let y = circles.data32F[i * 3 + 1];
                         let r = circles.data32F[i * 3 + 2];
 
-                        // Gambar Garis Diameter
                         ctx.strokeStyle = "#00ff00";
-                        ctx.lineWidth = 3;
+                        ctx.lineWidth = 4;
                         ctx.beginPath();
                         ctx.arc(x, y, r, 0, 2 * Math.PI);
                         ctx.stroke();
 
-                        // Gambar titik pusat
-                        ctx.fillStyle = "red";
-                        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
-
                         if (pixelsPerMm) {
-                            const diameter = ((r * 2) / pixelsPerMm).toFixed(2);
-                            const radius = (r / pixelsPerMm).toFixed(2);
-                            
-                            // Tampilkan teks ukuran
+                            const diam = ((r * 2) / pixelsPerMm).toFixed(2);
                             ctx.fillStyle = "#00ff00";
-                            ctx.font = "bold 20px Arial";
-                            ctx.shadowColor = "black"; ctx.shadowBlur = 5;
-                            ctx.fillText(`D: ${diameter} mm`, x + r + 10, y);
-                            ctx.fillText(`R: ${radius} mm`, x + r + 10, y + 25);
+                            ctx.font = "bold 30px Arial";
+                            ctx.fillText(`D: ${diam}mm`, x - 40, y - r - 10);
                         }
                     }
-                    circles.delete();
-                    requestAnimationFrame(loop);
-                } catch (e) {
-                    console.error(e);
-                    requestAnimationFrame(loop);
+
+                    // Gambar titik sementara
+                    points.forEach(p => {
+                        ctx.fillStyle = "yellow";
+                        ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI*2); ctx.fill();
+                    });
+
+                    requestAnimationFrame(process);
+                } catch (err) {
+                    console.error("Frame Error:", err);
                 }
             }
-            loop();
+            process();
         }
 
-        // Jalankan setelah OpenCV siap
+        // Jalankan saat library OpenCV siap
         var Module = {
             onRuntimeInitialized: () => {
-                info.innerText = "OpenCV Siap. Kalibrasi dulu.";
-                startCamera();
-                processFrame();
+                statusLabel.innerText = "Sistem Online";
+                info.innerText = "Klik 2 titik kartu untuk kalibrasi.";
+                initCamera();
             }
         };
     </script>
