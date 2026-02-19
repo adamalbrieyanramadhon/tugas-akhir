@@ -2,87 +2,114 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Pengukur Dimensi Real-Time</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <title>AI Camera Measure - Pro</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #222; color: white; }
-        #container { position: relative; display: inline-block; }
-        video, canvas { position: absolute; left: 0; top: 0; border-radius: 10px; }
-        .controls { margin-top: 500px; background: #333; padding: 20px; display: inline-block; border-radius: 8px; }
-        input { width: 60px; padding: 5px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; }
+        #wrapper { position: relative; display: inline-block; margin-top: 20px; border: 5px solid #444; border-radius: 10px; overflow: hidden; }
+        video { display: block; }
+        canvas { position: absolute; top: 0; left: 0; cursor: crosshair; }
+        .info-panel { background: #333; padding: 15px; margin-top: 10px; border-radius: 8px; display: inline-block; min-width: 400px; }
+        .btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        .btn:hover { background: #0056b3; }
+        .instructions { color: #aaa; font-size: 0.9em; margin-top: 5px; }
     </style>
 </head>
 <body>
 
-    <h2>Pengukur Panjang & Lebar (Beta)</h2>
-    <p>Letakkan benda dan <b>Kartu ATM (85.6mm)</b> sebagai referensi.</p>
-
-    <div id="container">
-        <video id="webcam" width="640" height="480" autoplay muted></video>
+    <h2>Kamera Pengukur Objek</h2>
+    
+    <div id="wrapper">
+        <video id="video" width="640" height="480" autoplay></video>
         <canvas id="canvas" width="640" height="480"></canvas>
     </div>
 
-    <div class="controls">
-        <label>Lebar Referensi (mm): </label>
-        <input type="number" id="refWidth" value="85.6"> 
-        <span>(Contoh: Kartu ATM = 85.6mm)</span>
+    <br>
+    <div class="info-panel">
+        <div>
+            <strong>Langkah 1:</strong> Masukkan panjang referensi (misal 100mm): 
+            <input type="number" id="refReal" value="100" style="width: 60px;"> mm
+        </div>
+        <div class="instructions">Langkah 2: Klik 2 titik pada benda referensi (misal penggaris) di layar untuk kalibrasi.</div>
+        <hr>
+        <div id="result">Piksel per mm: <span id="pxmm">Belum diatur</span></div>
+        <button class="btn" onclick="resetCalibration()">Reset Kalibrasi</button>
     </div>
 
     <script>
-        const video = document.getElementById('webcam');
+        const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-        const refWidthInput = document.getElementById('refWidth');
+        const pxmmText = document.getElementById('pxmm');
+        const refRealInput = document.getElementById('refReal');
 
-        async function start() {
-            const model = await cocoSsd.load();
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = stream;
+        let points = [];
+        let pixelsPerMm = null;
 
-            video.onloadedmetadata = () => {
-                detect(model);
-            };
+        // Akses Kamera
+        navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+            .then(stream => { video.srcObject = stream; })
+            .catch(err => alert("Kamera tidak ditemukan: " + err));
+
+        // Tangkap klik user untuk kalibrasi atau pengukuran
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            points.push({x, y});
+
+            if (points.length === 2 && !pixelsPerMm) {
+                // Kalibrasi Pertama
+                const dist = Math.sqrt(Math.pow(points[1].x - points[0].x, 2) + Math.pow(points[1].y - points[0].y, 2));
+                pixelsPerMm = dist / parseFloat(refRealInput.value);
+                pxmmText.innerText = pixelsPerMm.toFixed(4);
+                points = []; // Reset setelah kalibrasi
+            } else if (points.length === 2 && pixelsPerMm) {
+                // Pengukuran Benda Selanjutnya
+                points = []; 
+            }
+        });
+
+        function resetCalibration() {
+            pixelsPerMm = null;
+            points = [];
+            pxmmText.innerText = "Belum diatur";
         }
 
-        async function detect(model) {
-            const predictions = await model.detect(video);
+        function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            let pixelsPerMm = null;
-
-            // Cari objek referensi dulu (misal kartu/handphone yang sudah diketahui ukurannya)
-            predictions.forEach(p => {
-                if (p.class === 'cell phone' || p.class === 'book') { // Contoh objek referensi
-                    const pixelWidth = p.bbox[2];
-                    pixelsPerMm = pixelWidth / parseFloat(refWidthInput.value);
-                }
+            // Gambar titik yang sedang diklik
+            points.forEach(p => {
+                ctx.fillStyle = "red";
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+                ctx.fill();
             });
 
-            predictions.forEach(p => {
-                const [x, y, width, height] = p.bbox;
+            // Jika ada 2 titik, gambar garis dan hitung jarak
+            if (points.length === 2) {
+                ctx.strokeStyle = "yellow";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, points[0].y);
+                ctx.lineTo(points[1].x, points[1].y);
+                ctx.stroke();
 
-                // Gambar Kotak
-                ctx.strokeStyle = "#00FF00";
-                ctx.lineWidth = 3;
-                ctx.strokeRect(x, y, width, height);
-
-                // Jika referensi ditemukan, hitung ukuran asli
-                let label = p.class;
                 if (pixelsPerMm) {
-                    const realW = (width / pixelsPerMm).toFixed(1);
-                    const realH = (height / pixelsPerMm).toFixed(1);
-                    label += ` (${realW} x ${realH} mm)`;
+                    const distPx = Math.sqrt(Math.pow(points[1].x - points[0].x, 2) + Math.pow(points[1].y - points[0].y, 2));
+                    const realDist = (distPx / pixelsPerMm).toFixed(2);
+                    
+                    ctx.fillStyle = "yellow";
+                    ctx.font = "20px Arial";
+                    ctx.fillText(`${realDist} mm`, (points[0].x + points[1].x)/2, (points[0].y + points[1].y)/2 - 10);
                 }
+            }
 
-                ctx.fillStyle = "#00FF00";
-                ctx.fillText(label, x, y > 10 ? y - 5 : 10);
-            });
-
-            requestAnimationFrame(() => detect(model));
+            requestAnimationFrame(draw);
         }
 
-        start();
+        draw();
     </script>
 </body>
 </html>
