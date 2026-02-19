@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Penghitung Benda dengan Kamera</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    
+    <style>
+        body { 
+            font-family: sans-serif; 
+            text-align: center; 
+            background-color: #f4f4f9; 
+            padding: 20px; 
+        }
+        #video-container { 
+            position: relative; 
+            display: inline-block; 
+            margin-top: 20px;
+        }
+        video { 
+            border: 3px solid #333; 
+            border-radius: 8px; 
+            background-color: #000;
+        }
+        /* Canvas ditumpuk di atas video untuk menggambar kotak hijau */
+        canvas { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+        }
+        #status { 
+            font-size: 1.2em; 
+            color: #d9534f; 
+            font-weight: bold; 
+        }
+        #count-box {
+            font-size: 1.5em;
+            background-color: #5cb85c;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: inline-block;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Kamera Penghitung Benda Otomatis</h2>
+    <div id="status">Memuat AI... Mohon tunggu sebentar (membutuhkan koneksi internet).</div>
+    <div id="count-box">Total Benda di Layar: <span id="count">0</span></div>
+    
+    <br>
+    <div id="video-container">
+        <video id="webcam" width="640" height="480" autoplay muted></video>
+        <canvas id="canvas" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status');
+        const countText = document.getElementById('count');
+
+        // Fungsi untuk meminta izin dan menyalakan webcam
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 },
+                    audio: false
+                });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => resolve(video);
+                });
+            } catch (error) {
+                statusText.innerText = "Gagal mengakses kamera. Pastikan izin kamera diberikan.";
+                statusText.style.color = "red";
+                console.error(error);
+            }
+        }
+
+        // Fungsi utama untuk mendeteksi benda
+        async function runDetection() {
+            await setupCamera();
+            video.play();
+            
+            // Memuat model AI
+            const model = await cocoSsd.load();
+            statusText.innerText = "Sistem Siap! Arahkan kamera ke benda.";
+            statusText.style.color = "green";
+
+            // Melakukan deteksi berulang-ulang (looping)
+            setInterval(async () => {
+                // AI mendeteksi frame saat ini
+                const predictions = await model.detect(video);
+                
+                // Hapus coretan di layar sebelumnya
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Perbarui jumlah benda di teks
+                countText.innerText = predictions.length;
+
+                // Menggambar kotak untuk setiap benda yang ditemukan
+                predictions.forEach(prediction => {
+                    // Kotak deteksi
+                    ctx.beginPath();
+                    ctx.rect(...prediction.bbox);
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = '#00FF00';
+                    ctx.stroke();
+                    
+                    // Teks nama benda
+                    ctx.fillStyle = '#00FF00';
+                    ctx.font = '16px Arial';
+                    ctx.fillText(
+                        prediction.class, 
+                        prediction.bbox[0], 
+                        prediction.bbox[1] > 20 ? prediction.bbox[1] - 5 : 20
+                    );
+                });
+            }, 100); // Kecepatan update (100 milidetik)
+        }
+
+        // Jalankan program
+        runDetection();
+    </script>
+</body>
+</html>
