@@ -3,54 +3,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Auto Measure</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <title>AI Mechanical Measure - Diameter</title>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
     <style>
-        body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; }
+        body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; }
+        .container { position: relative; width: 100vw; height: 70vh; background: #000; }
         video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        .overlay { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
-                   background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; text-align: center; width: 80%; }
-        .btn-switch { background: #0070f3; color: white; border: none; padding: 10px; border-radius: 5px; margin-top: 10px; }
+        .controls { padding: 20px; background: #222; border-top: 2px solid #444; }
+        .stats { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 8px; font-size: 12px; text-align: left; }
+        button { padding: 10px 20px; border-radius: 5px; border: none; background: #0070f3; color: white; font-weight: bold; }
+        input { padding: 8px; width: 60px; border-radius: 5px; }
     </style>
 </head>
 <body>
 
-    <div id="container">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-        
-        <div class="overlay">
-            <div id="info">Sedang memuat AI...</div>
-            <button class="btn-switch" onclick="switchCamera()">🔄 Ganti Kamera</button>
+    <div class="container">
+        <div class="stats" id="stats">
+            Status: Menunggu OpenCV...<br>
+            Piksel per mm: <span id="pxmm">N/A</span>
         </div>
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="canvasOutput"></canvas>
+    </div>
+
+    <div class="controls">
+        <label>Lebar Referensi (mm): </label>
+        <input type="number" id="refSize" value="85.6">
+        <button onclick="calibrate()">Set Kalibrasi (Klik 2 Titik)</button>
+        <button style="background: #555;" onclick="switchCamera()">🔄 Ganti Kamera</button>
+        <p style="font-size: 11px; color: #aaa; margin-top: 10px;">Arahkan kamera tegak lurus ke benda lingkaran.</p>
     </div>
 
     <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const info = document.getElementById('info');
-        
-        let model;
-        let currentFacingMode = 'environment';
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvasOutput');
+        let ctx = canvas.getContext('2d');
         let pixelsPerMm = null;
-        const REF_REAL_WIDTH = 85.6; // Lebar kartu standar dalam mm
+        let points = [];
+        let currentFacingMode = 'environment';
 
-        async function setupApp() {
-            info.innerText = "Memuat Model AI...";
-            model = await cocoSsd.load();
-            startCamera();
-        }
-
+        // Inisialisasi Kamera
         async function startCamera() {
-            if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: currentFacingMode }
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: currentFacingMode, width: 1280, height: 720 } 
             });
             video.srcObject = stream;
-            video.onloadeddata = () => predict();
         }
 
         function switchCamera() {
@@ -58,52 +55,83 @@
             startCamera();
         }
 
-        async function predict() {
-            const predictions = await model.detect(video);
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Kalibrasi Manual Jarak (Piksel ke MM)
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            points.push({x, y});
+            if (points.length === 2) {
+                const dist = Math.sqrt(Math.pow(points[1].x-points[0].x,2) + Math.pow(points[1].y-points[0].y,2));
+                pixelsPerMm = dist / parseFloat(document.getElementById('refSize').value);
+                document.getElementById('pxmm').innerText = pixelsPerMm.toFixed(2);
+                points = [];
+            }
+        });
 
-            // 1. Cari Referensi Dulu (Misal kartu/dompet/hp)
-            // Di COCO-SSD, kartu sering terdeteksi sebagai 'book' atau 'cell phone'
-            predictions.forEach(p => {
-                if (p.class === 'book' || p.class === 'cell phone') {
-                    const pixelWidth = p.bbox[2];
-                    pixelsPerMm = pixelWidth / REF_REAL_WIDTH;
-                }
-            });
-
-            // 2. Gambar dan Ukur Semua Benda yang Terdeteksi
-            predictions.forEach(p => {
-                const [x, y, width, height] = p.bbox;
+        // Loop Pemrosesan Gambar dengan OpenCV
+        function processVideo() {
+            try {
+                if (!cv.Mat) { setTimeout(processVideo, 100); return; }
                 
-                // Gambar Box
-                ctx.strokeStyle = pixelsPerMm ? "#00FF00" : "#FF0000";
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x, y, width, height);
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                let cap = new cv.VideoCapture(video);
+                
+                const FPS = 30;
+                function action() {
+                    cap.read(src);
+                    let gray = new cv.Mat();
+                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                    cv.medianBlur(gray, gray, 5);
+                    
+                    let circles = new cv.Mat();
+                    // Deteksi Lingkaran (Hough Circles)
+                    cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1, 45, 75, 40, 0, 0);
 
-                // Hitung Dimensi
-                let label = p.class;
-                if (pixelsPerMm) {
-                    const wmm = (width / pixelsPerMm).toFixed(1);
-                    const hmm = (height / pixelsPerMm).toFixed(1);
-                    label += ` ${wmm}x${hmm} mm`;
-                    info.innerText = "Sistem Aktif: Mengukur Otomatis";
-                } else {
-                    info.innerText = "Letakkan Kartu ATM sebagai referensi ukuran";
+                    // Gambar hasil ke canvas
+                    cv.imshow('canvasOutput', src);
+
+                    for (let i = 0; i < circles.cols; ++i) {
+                        let x = circles.data32F[i * 3];
+                        let y = circles.data32F[i * 3 + 1];
+                        let r = circles.data32F[i * 3 + 2];
+                        
+                        // Gambar Lingkaran
+                        ctx.strokeStyle = "#00ff00";
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.arc(x, y, r, 0, 2 * Math.PI);
+                        ctx.stroke();
+
+                        // Gambar Titik Pusat
+                        ctx.fillStyle = "red";
+                        ctx.fillRect(x-2, y-2, 4, 4);
+
+                        if (pixelsPerMm) {
+                            let diameterMm = ((r * 2) / pixelsPerMm).toFixed(2);
+                            let radiusMm = (r / pixelsPerMm).toFixed(2);
+                            
+                            ctx.fillStyle = "#00ff00";
+                            ctx.font = "bold 20px Arial";
+                            ctx.fillText(`D: ${diameterMm}mm`, x + r + 5, y);
+                            ctx.fillText(`R: ${radiusMm}mm`, x + r + 5, y + 25);
+                        }
+                    }
+                    
+                    document.getElementById('stats').innerHTML = `Status: OpenCV Ready<br>Benda terdeteksi: ${circles.cols}<br>Px/mm: ${pixelsPerMm ? pixelsPerMm.toFixed(2) : 'Butuh Kalibrasi'}`;
+
+                    circles.delete(); gray.delete();
+                    setTimeout(action, 1000/FPS);
                 }
-
-                // Gambar Label
-                ctx.fillStyle = ctx.strokeStyle;
-                ctx.font = "bold 25px Arial";
-                ctx.fillText(label, x, y > 30 ? y - 10 : 30);
-            });
-
-            requestAnimationFrame(predict);
+                setTimeout(action, 0);
+            } catch (err) { console.log(err); }
         }
 
-        setupApp();
+        // Jalankan saat OpenCV siap
+        var Module = { onRuntimeInitialized: () => { processVideo(); startCamera(); } };
     </script>
 </body>
 </html>
