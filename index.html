@@ -1,52 +1,143 @@
-let pixelsPerMetric = null; // Variabel global untuk menyimpan skala
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Precision Measure 0.001</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: white; text-align: center; margin: 0; overflow-x: hidden; }
+        .container { position: relative; display: inline-block; margin-top: 20px; box-shadow: 0 0 20px rgba(0,255,0,0.2); border-radius: 10px; overflow: hidden; }
+        video, canvas { display: block; }
+        canvas { position: absolute; top: 0; left: 0; }
+        .ui-panel { background: #1e1e1e; padding: 20px; margin-top: 10px; border-top: 3px solid #00ff00; }
+        .data-display { font-size: 24px; color: #00ff00; font-weight: bold; margin: 10px 0; }
+        button { padding: 12px 25px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; transition: 0.3s; }
+        button:disabled { background: #444; cursor: not-allowed; }
+        button:hover:not(:disabled) { background: #00cc00; }
+        .info { font-size: 12px; color: #aaa; margin-top: 10px; }
+    </style>
+</head>
+<body>
 
-function processFrame() {
-    cap.read(src);
-    let gray = new cv.Mat();
-    let thresh = new cv.Mat();
-    let contours = new cv.MatVector();
-    let hierarchy = new cv.Mat();
+    <h2>Sistem Pengukuran Otomatis</h2>
+    
+    <div class="container">
+        <video id="videoInput" width="640" height="480" autoplay muted playsinline></video>
+        <canvas id="canvasOutput" width="640" height="480"></canvas>
+    </div>
 
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, gray, new cv.Size(7, 7), 0);
-    cv.threshold(gray, thresh, 100, 255, cv.THRESH_BINARY_INV); // Ubah sesuai pencahayaan
-
-    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-    for (let i = 0; i < contours.size(); ++i) {
-        let cnt = contours.get(i);
-        let area = cv.contourArea(cnt);
-        if (area < 2000) continue; // Abaikan objek kecil
-
-        let rect = cv.minAreaRect(cnt); // Mendapatkan kotak rotasi (lebih presisi dari boundingRect)
-        let vertices = cv.RotatedRect.points(rect);
+    <div class="ui-panel">
+        <div id="status">⏳ Memuat AI Engine (OpenCV)...</div>
+        <div class="data-display" id="measureResult">N/A mm</div>
+        <button id="startBtn" disabled onclick="startApp()">AKTIFKAN KAMERA</button>
+        <button onclick="resetCalibration()" style="background:#ff4444; color:white;">RESET SKALA</button>
         
-        // Gambar garis kontur
-        for (let j = 0; j < 4; j++) {
-            let p1 = vertices[j];
-            let p2 = vertices[(j + 1) % 4];
-            cv.line(src, p1, p2, [0, 255, 0, 255], 2);
+        <div class="info">
+            * Letakkan kartu ATM (85.6mm) sebagai referensi pertama untuk kalibrasi.
+        </div>
+    </div>
+
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
+
+    <script>
+        let video = document.getElementById('videoInput');
+        let canvas = document.getElementById('canvasOutput');
+        let statusText = document.getElementById('status');
+        let measureDisplay = document.getElementById('measureResult');
+        
+        let src, dst, gray, thresh, contours, hierarchy;
+        let cap;
+        let pixelsPerMetric = null;
+
+        function onOpenCvReady() {
+            statusText.innerText = "Sistem Siap. Klik tombol di bawah.";
+            document.getElementById('startBtn').disabled = false;
         }
 
-        // MENGHITUNG JARAK (Euclidean Distance)
-        let widthPx = Math.sqrt(Math.pow(vertices[0].x - vertices[1].x, 2) + Math.pow(vertices[0].y - vertices[1].y, 2));
-        
-        // JIKA INI ADALAH OBJEK PERTAMA (REFERENSI)
-        // Kita asumsikan objek referensi adalah kartu ATM (85.6 mm)
-        if (pixelsPerMetric === null) {
-            let KNOWN_WIDTH_MM = 85.6; 
-            pixelsPerMetric = widthPx / KNOWN_WIDTH_MM;
+        async function startApp() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: 640, height: 480 } 
+                });
+                video.srcObject = stream;
+                video.play();
+                statusText.innerText = "Mencari Objek Referensi...";
+                
+                // Inisialisasi Matriks OpenCV
+                src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+                dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+                gray = new cv.Mat();
+                thresh = new cv.Mat();
+                contours = new cv.MatVector();
+                hierarchy = new cv.Mat();
+                cap = new cv.VideoCapture(video);
+
+                requestAnimationFrame(processFrame);
+            } catch (err) {
+                statusText.innerText = "Error: Kamera tidak diizinkan.";
+                console.error(err);
+            }
         }
 
-        // HITUNG UKURAN ASLI
-        let realWidth = (widthPx / pixelsPerMetric).toFixed(3); // Presisi 3 desimal (0.001)
+        function resetCalibration() {
+            pixelsPerMetric = null;
+            statusText.innerText = "Skala direset. Gunakan kartu referensi lagi.";
+        }
 
-        cv.putText(src, realWidth + " mm", new cv.Point(rect.center.x, rect.center.y), 
-                   cv.FONT_HERSHEY_SIMPLEX, 0.6, [255, 255, 0, 255], 2);
-    }
+        function processFrame() {
+            try {
+                cap.read(src);
+                src.copyTo(dst);
+                
+                // Pre-processing untuk presisi
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(gray, gray, new cv.Size(7, 7), 0);
+                cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
-    cv.imshow('canvasOutput', src);
-    // Cleanup mat
-    gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-    requestAnimationFrame(processFrame);
-}
+                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    
+                    if (area < 5000) continue; // Filter noise kecil
+
+                    let rect = cv.minAreaRect(cnt);
+                    let vertices = cv.RotatedRect.points(rect);
+                    
+                    // Gambar Kotak
+                    for (let j = 0; j < 4; j++) {
+                        let p1 = new cv.Point(vertices[j].x, vertices[j].y);
+                        let p2 = new cv.Point(vertices[(j + 1) % 4].x, vertices[(j + 1) % 4].y);
+                        cv.line(dst, p1, p2, [0, 255, 0, 255], 2);
+                    }
+
+                    // Hitung Lebar dalam Piksel (Euclidean Distance)
+                    let dx = vertices[0].x - vertices[1].x;
+                    let dy = vertices[0].y - vertices[1].y;
+                    let widthPx = Math.sqrt(dx*dx + dy*dy);
+
+                    // LOGIKA KALIBRASI OTOMATIS
+                    if (pixelsPerMetric === null) {
+                        let REFERENSI_MM = 85.6; // Standar kartu kredit/ID
+                        pixelsPerMetric = widthPx / REFERENSI_MM;
+                        statusText.innerText = "✅ Terkalibrasi!";
+                    }
+
+                    let realWidth = (widthPx / pixelsPerMetric).toFixed(3);
+                    measureDisplay.innerText = realWidth + " mm";
+                    
+                    cv.putText(dst, realWidth + "mm", new cv.Point(rect.center.x - 30, rect.center.y), 
+                               cv.FONT_HERSHEY_SIMPLEX, 0.7, [0, 255, 0, 255], 2);
+                }
+
+                cv.imshow('canvasOutput', dst);
+                requestAnimationFrame(processFrame);
+            } catch (err) {
+                console.log("Frame error, mengabaikan...");
+                requestAnimationFrame(processFrame);
+            }
+        }
+    </script>
+</body>
+</html>
