@@ -1,85 +1,39 @@
-// Fungsi Looping Pemrosesan Frame (Update untuk Radius & Sudut)
-        function processVideo() {
-            if (!streaming) return;
-            try {
-                cap.read(src);
-                src.copyTo(dst);
-                
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-                cv.Canny(gray, edges, 40, 120, 3, false);
-                
-                // Gunakan RETR_TREE agar bisa mendeteksi lubang di dalam komponen jika diperlukan nanti
-                cv.findContours(edges, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagnostic Test - Kamera</title>
+    <style>
+        body { text-align: center; font-family: Arial; padding: 20px; background: #222; color: white; }
+        video { width: 100%; max-width: 500px; border: 4px solid red; border-radius: 10px; }
+        .pesan { margin-top: 20px; font-weight: bold; padding: 10px; background: #444; border-radius: 5px; }
+    </style>
+</head>
+<body>
 
-                for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
-                    
-                    if (area > 1500) { 
-                        // 1. Dapatkan Bounding Box (Panjang x Lebar Total)
-                        let rect = cv.minAreaRect(cnt);
-                        let box = cv.RotatedRect.points(rect);
-                        
-                        // Gambar Bounding Box (Garis Hijau)
-                        let verticesBox = new cv.MatVector();
-                        let matObj = cv.matFromArray(4, 1, cv.CV_32SC2, [
-                            box[0].x, box[0].y, box[1].x, box[1].y,
-                            box[2].x, box[2].y, box[3].x, box[3].y
-                        ]);
-                        verticesBox.push_back(matObj);
-                        cv.polylines(dst, verticesBox, true, new cv.Scalar(0, 255, 0, 255), 2);
-                        matObj.delete(); verticesBox.delete();
+    <h2>Tes Kamera Sistem</h2>
+    <video id="videoElement" autoplay playsinline></video>
+    <div class="pesan" id="statusPesan">Menunggu izin kamera...</div>
 
-                        // 2. Pendekatan Poligon untuk mencari Sudut / Chamfer
-                        let approx = new cv.Mat();
-                        let perimeter = cv.arcLength(cnt, true);
-                        // Toleransi 2% dari keliling untuk menentukan seberapa presisi sudutnya
-                        cv.approxPolyDP(cnt, approx, 0.02 * perimeter, true); 
-                        let totalSudut = approx.rows; // Jumlah sudut yang terdeteksi
+    <script>
+        const video = document.getElementById('videoElement');
+        const statusPesan = document.getElementById('statusPesan');
 
-                        // 3. Dapatkan Lingkaran Luar (Radius / Diameter)
-                        let circle = cv.minEnclosingCircle(cnt);
-                        
-                        // Gambar Lingkaran Pembatas (Garis Biru)
-                        cv.circle(dst, circle.center, circle.radius, new cv.Scalar(255, 0, 0, 255), 1);
+        // Meminta akses kamera (Kamera apa saja yang tersedia, depan atau belakang)
+        navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+            .then(function(stream) {
+                video.srcObject = stream;
+                statusPesan.innerHTML = "✅ BERHASIL! Kamera menyala.";
+                statusPesan.style.color = "#00ff00";
+                video.style.borderColor = "#00ff00"; // Bingkai jadi hijau
+            })
+            .catch(function(error) {
+                // Menangkap pesan error dari browser
+                statusPesan.innerHTML = "❌ GAGAL: " + error.message;
+                statusPesan.style.color = "#ff4444";
+            });
+    </script>
 
-                        // 4. Hitung & Tampilkan Ukuran (Jika sudah kalibrasi)
-                        if (ppm > 0) {
-                            // Dimensi Bounding Box
-                            let w = (rect.size.width / ppm).toFixed(2);
-                            let h = (rect.size.height / ppm).toFixed(2);
-                            
-                            // Dimensi Radius & Diameter
-                            let radiusMM = (circle.radius / ppm).toFixed(2);
-                            let diameterMM = (radiusMM * 2).toFixed(2);
-                            
-                            // Analisa Bentuk Dasar
-                            let shapeText = "";
-                            if (totalSudut === 3) shapeText = "Segitiga";
-                            else if (totalSudut === 4) shapeText = "Persegi/Balok";
-                            else if (totalSudut === 5) shapeText = "Segi-5 (Kemungkinan Chamfer)";
-                            else if (totalSudut > 8) shapeText = "Silinder/Benda Bulat";
-                            else shapeText = `Poligon ${totalSudut} Sudut`;
-
-                            // Teks yang akan ditampilkan
-                            let textDim = `Dim: ${w} x ${h} mm`;
-                            let textDia = `Dia: ${diameterMM} (R${radiusMM})`;
-                            let textShape = `Profil: ${shapeText}`;
-                            
-                            // Posisikan teks di layar
-                            cv.putText(dst, textDim, new cv.Point(box[1].x, box[1].y - 45), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 255, 0, 255), 2);
-                            cv.putText(dst, textDia, new cv.Point(box[1].x, box[1].y - 25), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(255, 200, 0, 255), 2);
-                            cv.putText(dst, textShape, new cv.Point(box[1].x, box[1].y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 200, 255, 255), 2);
-                        }
-                        
-                        approx.delete();
-                    }
-                }
-                
-                cv.imshow('canvasOutput', dst);
-                requestAnimationFrame(processVideo); 
-            } catch (err) {
-                console.error(err);
-            }
-        }
+</body>
+</html>
