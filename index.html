@@ -1,26 +1,99 @@
-// Variabel Kalibrasi (Contoh: Panjang Kartu ATM = 85.6 mm)
-const KNOWN_WIDTH_MM = 85.6; 
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High Precision Measure Tool</title>
+    <script async src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: #eee; margin: 0; }
+        .container { padding: 15px; }
+        video, canvas { width: 100%; max-width: 600px; border: 2px solid #00ff00; border-radius: 5px; }
+        .panel { background: #333; padding: 15px; margin: 10px auto; max-width: 580px; border-radius: 10px; }
+        input { padding: 8px; width: 80px; border-radius: 4px; border: none; }
+        button { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        #result { font-size: 1.5em; color: #00ff00; margin-top: 10px; font-family: 'Courier New', Courier, monospace; }
+    </style>
+</head>
+<body>
 
-function measureObject(contours, hierarchy) {
-    // 1. Cari kontur terbesar (asumsi: ini adalah benda referensi/kartu)
-    let refContour = contours.get(0); 
-    let rect = cv.minAreaRect(refContour);
-    let pixelWidth = Math.max(rect.size.width, rect.size.height);
+<div class="container">
+    <h2>🛠️ Mechanical Precision Measure</h2>
+    
+    <div class="panel">
+        <label>Ukuran Referensi (mm): </label>
+        <input type="number" id="refSize" value="85.600" step="0.001">
+        <p style="font-size: 0.8em;">*Gunakan KTP (85.6) atau Gage Block untuk kalibrasi</p>
+    </div>
 
-    // 2. Hitung Rasio: Pixel per Millimeter (PPM)
-    let ppm = pixelWidth / KNOWN_WIDTH_MM;
+    <video id="videoInput" autoplay playsinline></video>
+    <canvas id="canvasOutput" style="display:none;"></canvas>
 
-    // 3. Ukur kontur lainnya
-    for (let i = 1; i < contours.size(); ++i) {
-        let cnt = contours.get(i);
-        let area = cv.contourArea(cnt);
-        if (area < 500) continue; // Abaikan noise kecil
+    <div id="result">Hasil: 0.000 mm</div>
 
-        let box = cv.minAreaRect(cnt);
-        let widthMM = box.size.width / ppm;
-        let heightMM = box.size.height / ppm;
+    <div class="panel">
+        <button id="calibrateBtn">1. Kalibrasi</button>
+        <button id="measureBtn" style="background:#007bff">2. Ukur Benda Kerja</button>
+    </div>
+    
+    <p id="status">Memuat Engine...</p>
+</div>
 
-        console.log(`Benda ${i}: ${widthMM.toFixed(3)} mm x ${heightMM.toFixed(3)} mm`);
-        // .toFixed(3) akan menampilkan 3 angka di belakang koma (0.001)
+<script>
+    let ppm = 0; // Pixels Per Millimeter
+    const video = document.getElementById('videoInput');
+    const canvas = document.getElementById('canvasOutput');
+    const status = document.getElementById('status');
+    const resultDiv = document.getElementById('result');
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", focusMode: "continuous" } })
+        .then(s => video.srcObject = s);
+
+    function processImage() {
+        let src = cv.imread(video);
+        let gray = new cv.Mat();
+        let thresh = new cv.Mat();
+        let contours = new cv.PolyVector();
+        let hierarchy = new cv.Mat();
+
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+        cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+        return { src, contours, thresh };
     }
-}
+
+    document.getElementById('calibrateBtn').onclick = () => {
+        let { contours } = processImage();
+        if (contours.size() > 0) {
+            let cnt = contours.get(0); // Ambil kontur terbesar
+            let rect = cv.minAreaRect(cnt);
+            let pixelDim = Math.max(rect.size.width, rect.size.height);
+            let realDim = parseFloat(document.getElementById('refSize').value);
+            
+            ppm = pixelDim / realDim;
+            status.innerText = `Kalibrasi Berhasil! PPM: ${ppm.toFixed(4)}`;
+        }
+    };
+
+    document.getElementById('measureBtn').onclick = () => {
+        if (ppm === 0) {
+            alert("Lakukan kalibrasi terlebih dahulu!");
+            return;
+        }
+        let { contours } = processImage();
+        if (contours.size() > 1) {
+            let cnt = contours.get(1); // Ambil kontur benda kedua
+            let rect = cv.minAreaRect(cnt);
+            let widthMM = Math.max(rect.size.width, rect.size.height) / ppm;
+            resultDiv.innerText = `Hasil: ${widthMM.toFixed(3)} mm`;
+        }
+    };
+
+    function onOpenCvReady() { status.innerText = "Sistem Siap."; }
+    setTimeout(() => { if(typeof cv !== 'undefined') onOpenCvReady(); }, 2000);
+</script>
+
+</body>
+</html>
