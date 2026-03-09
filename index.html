@@ -3,121 +3,221 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Precision Measure AI - Black & White</title>
+    <title>AI Precision Measure 0.001</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; padding: 20px; }
-        .wrapper { position: relative; display: inline-block; background: #000; }
-        video { display: none; } /* Sembunyikan video asli agar fokus ke hasil B&W */
-        canvas { border: 2px solid #00ff00; border-radius: 8px; max-width: 100%; }
-        .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 10px; }
-        .data { font-size: 24px; color: #00ff00; font-family: monospace; margin: 10px 0; }
-        button { padding: 12px 24px; cursor: pointer; background: #00ff00; border: none; font-weight: bold; border-radius: 5px; }
-        button:disabled { background: #555; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #121212; color: white; text-align: center; margin: 0; padding: 0; 
+        }
+        .header { background: #1a1a1a; padding: 10px; border-bottom: 2px solid #00ff00; }
+        .header h3 { margin: 0; color: #00ff00; }
+        
+        .container { position: relative; width: 100%; max-width: 640px; margin: 15px auto; }
+        video { display: none; } /* Sembunyikan video asli */
+        canvas { width: 100%; border: 1px solid #333; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,255,0,0.1); }
+        
+        .panel { 
+            background: #1e1e1e; max-width: 600px; margin: 10px auto; padding: 15px; 
+            border-radius: 8px; text-align: left; border-left: 4px solid #00ff00;
+        }
+        .data-grid { 
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; 
+        }
+        .data-box { 
+            background: #2a2a2a; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 16px;
+        }
+        .data-box span { color: #00ff00; font-weight: bold; font-size: 18px; float: right; }
+        
+        .controls { margin-top: 15px; text-align: center; }
+        button { 
+            padding: 10px 20px; font-size: 14px; cursor: pointer; background: #00ff00; 
+            color: #000; border: none; border-radius: 5px; font-weight: bold; margin: 5px;
+        }
+        button:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .btn-reset { background: #ff4444; color: white; }
+        
+        #status { font-size: 14px; color: #aaa; margin-bottom: 10px; text-align: center; }
     </style>
 </head>
 <body>
 
-    <h2>Alat Ukur Otomatis (Mode Canny)</h2>
+    <div class="header">
+        <h3>📏 PRECISION MEASURE (B&W MODE)</h3>
+    </div>
     
-    <div class="wrapper">
+    <div class="container">
         <video id="videoInput" width="640" height="480" autoplay muted playsinline></video>
         <canvas id="canvasOutput" width="640" height="480"></canvas>
     </div>
 
-    <div class="controls">
-        <p id="status">Memuat OpenCV.js...</p>
-        <div class="data" id="result">0.000 mm</div>
-        <button id="startBtn" disabled onclick="startProcessing()">MULAI DETEKSI</button>
-        <button onclick="ppm = null" style="background: #ff4444; color: white;">RESET SKALA</button>
+    <div class="panel">
+        <div id="status">⏳ Memuat OpenCV.js Engine...</div>
+        
+        <div class="data-grid">
+            <div class="data-box">Panjang (P): <span id="val-p">0.000</span></div>
+            <div class="data-box">Lebar (L): <span id="val-l">0.000</span></div>
+            <div class="data-box">Diameter (D): <span id="val-d">0.000</span></div>
+            <div class="data-box">Radius (R): <span id="val-r">0.000</span></div>
+            <div class="data-box" style="grid-column: span 2;">Status Chamfer: <span id="val-c" style="color: #ffaa00;">Tidak Terdeteksi</span></div>
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" disabled onclick="initApp()">Mulai Kamera</button>
+            <button class="btn-reset" onclick="resetSkala()">Reset Skala</button>
+        </div>
     </div>
 
-    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="cvReady()"></script>
 
     <script>
         let video = document.getElementById('videoInput');
-        let statusText = document.getElementById('status');
-        let resultDiv = document.getElementById('result');
+        let ppm = null; // Pixels Per Metric (Skala Kalibrasi)
         let src, gray, edge, contours, hierarchy, cap;
-        let ppm = null; // Pixels Per Metric
 
-        function onOpenCvReady() {
-            statusText.innerText = "OpenCV Siap! Gunakan kartu ATM sebagai referensi pertama.";
+        function cvReady() {
+            document.getElementById('status').innerText = "✅ Engine Siap! Klik 'Mulai Kamera'.";
             document.getElementById('startBtn').disabled = false;
         }
 
-        async function startProcessing() {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: 640, height: 480 } 
-            });
-            video.srcObject = stream;
-            
-            video.onloadedmetadata = () => {
-                video.play();
-                // Inisialisasi memori
-                src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-                gray = new cv.Mat();
-                edge = new cv.Mat();
-                contours = new cv.MatVector();
-                hierarchy = new cv.Mat();
-                cap = new cv.VideoCapture(video);
-                processFrame();
-            };
+        async function initApp() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: 640, height: 480 } 
+                });
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    video.play();
+                    document.getElementById('status').innerText = "📷 Kamera aktif. Letakkan kartu ATM (85.6mm) untuk kalibrasi awal.";
+                    
+                    // Inisialisasi Matriks memori OpenCV
+                    src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+                    gray = new cv.Mat();
+                    edge = new cv.Mat();
+                    contours = new cv.MatVector();
+                    hierarchy = new cv.Mat();
+                    cap = new cv.VideoCapture(video);
+                    
+                    processFrame();
+                };
+            } catch (err) {
+                document.getElementById('status').innerText = "❌ Error: Akses kamera ditolak atau tidak tersedia.";
+                console.error(err);
+            }
+        }
+
+        function resetSkala() {
+            ppm = null;
+            document.getElementById('status').innerText = "🔄 Skala direset. Letakkan kembali benda referensi.";
+            document.getElementById('val-p').innerText = "0.000";
+            document.getElementById('val-l').innerText = "0.000";
+            document.getElementById('val-d').innerText = "0.000";
+            document.getElementById('val-r').innerText = "0.000";
+            document.getElementById('val-c').innerText = "Tidak Terdeteksi";
+            document.getElementById('val-c').style.color = "#ffaa00";
         }
 
         function processFrame() {
             try {
                 cap.read(src);
                 
-                // 1. Ubah ke Abu-abu
+                // 1. Pre-processing: Grayscale & Blur
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
                 
-                // 2. Blur untuk presisi
-                let ksize = new cv.Size(5, 5);
-                cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
-                
-                // 3. Canny Edge (Membuat tampilan Hitam Putih Garis)
+                // 2. Canny Edge Detection (Tampilan Hitam Putih Garis)
                 cv.Canny(gray, edge, 50, 150, 3, false);
                 
-                // 4. Deteksi Kontur dari hasil Canny
+                // 3. Cari Kontur
                 cv.findContours(edge, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
+                let largestArea = 0;
+                let bestContourIndex = -1;
+
+                // Cari objek terbesar di layar untuk mengurangi noise
                 for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
-                    
-                    if (area > 5000) { // Hanya proses objek besar
-                        let rect = cv.minAreaRect(cnt);
-                        let vertices = cv.RotatedRect.points(rect);
-                        
-                        // Gambar kotak ukur pada tampilan B&W
-                        for (let j = 0; j < 4; j++) {
-                            let p1 = vertices[j];
-                            let p2 = vertices[(j + 1) % 4];
-                            cv.line(edge, p1, p2, [255, 255, 255, 255], 2);
-                        }
-
-                        // Hitung panjang dalam piksel
-                        let widthPx = Math.hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y);
-
-                        // Kalibrasi otomatis (Gunakan benda 85.6mm/Kartu ATM)
-                        if (ppm === null) {
-                            ppm = widthPx / 85.6;
-                        }
-
-                        let realWidth = (widthPx / ppm).toFixed(3);
-                        resultDiv.innerText = realWidth + " mm";
-                        
-                        cv.putText(edge, realWidth + "mm", new cv.Point(rect.center.x, rect.center.y), 
-                                   cv.FONT_HERSHEY_SIMPLEX, 0.6, [255, 255, 255, 255], 2);
+                    let area = cv.contourArea(contours.get(i));
+                    if (area > 3000 && area > largestArea) {
+                        largestArea = area;
+                        bestContourIndex = i;
                     }
                 }
 
-                // Tampilkan hasil Canny yang sudah diberi garis ukur
+                if (bestContourIndex !== -1) {
+                    let cnt = contours.get(bestContourIndex);
+                    
+                    // --- LOGIKA GEOMETRI ---
+                    
+                    // A. Bounding Box (Panjang & Lebar)
+                    let rect = cv.minAreaRect(cnt);
+                    let vertices = cv.RotatedRect.points(rect);
+                    let side1 = Math.hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y);
+                    let side2 = Math.hypot(vertices[1].x - vertices[2].x, vertices[1].y - vertices[2].y);
+                    
+                    let pjgPx = Math.max(side1, side2);
+                    let lbrPx = Math.min(side1, side2);
+
+                    // B. Lingkaran Pembungkus (Diameter & Radius)
+                    let circle = cv.minEnclosingCircle(cnt);
+                    let diaPx = circle.radius * 2;
+
+                    // C. Deteksi Chamfer (Poligon Approximation)
+                    let approx = new cv.Mat();
+                    cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
+                    let vertexCount = approx.rows;
+                    let isChamfered = (vertexCount >= 5 && vertexCount <= 8);
+                    approx.delete();
+
+                    // --- KALIBRASI OTOMATIS ---
+                    // Jika belum kalibrasi, asumsikan objek terbesar pertama adalah referensi (85.6 mm)
+                    if (ppm === null) {
+                        ppm = pjgPx / 85.6; 
+                        document.getElementById('status').innerText = "✅ Skala Terkalibrasi! Singkirkan referensi dan ukur target.";
+                    }
+
+                    // --- KONVERSI PIKSEL KE MILIMETER ---
+                    let pjgMm = (pjgPx / ppm).toFixed(3);
+                    let lbrMm = (lbrPx / ppm).toFixed(3);
+                    let diaMm = (diaPx / ppm).toFixed(3);
+                    let radMm = (circle.radius / ppm).toFixed(3);
+
+                    // --- UPDATE UI TEXT ---
+                    // Cek apakah benda lebih mendekati lingkaran atau persegi
+                    let circleArea = Math.PI * Math.pow(circle.radius, 2);
+                    let isCircle = (largestArea / circleArea) > 0.75;
+
+                    if (isCircle) {
+                        document.getElementById('val-d').innerText = diaMm;
+                        document.getElementById('val-r').innerText = radMm;
+                        document.getElementById('val-p').innerText = "-";
+                        document.getElementById('val-l').innerText = "-";
+                        cv.circle(edge, circle.center, circle.radius, [255, 255, 255, 255], 2);
+                    } else {
+                        document.getElementById('val-p').innerText = pjgMm;
+                        document.getElementById('val-l').innerText = lbrMm;
+                        document.getElementById('val-d').innerText = "-";
+                        document.getElementById('val-r').innerText = "-";
+                        for (let j = 0; j < 4; j++) {
+                            cv.line(edge, vertices[j], vertices[(j + 1) % 4], [255, 255, 255, 255], 2);
+                        }
+                    }
+
+                    if (isChamfered && !isCircle) {
+                        document.getElementById('val-c').innerText = "Terdeteksi (" + vertexCount + " titik)";
+                        document.getElementById('val-c').style.color = "#00ff00";
+                    } else {
+                        document.getElementById('val-c').innerText = "Tidak Terdeteksi";
+                        document.getElementById('val-c').style.color = "#ffaa00";
+                    }
+                }
+
+                // Tampilkan hasil pemrosesan visual ke Canvas
                 cv.imshow('canvasOutput', edge);
                 
+                // Looping frame selanjutnya
                 requestAnimationFrame(processFrame);
             } catch (err) {
-                console.error(err);
+                console.error("Frame processing error: ", err);
                 requestAnimationFrame(processFrame);
             }
         }
