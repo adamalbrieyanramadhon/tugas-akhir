@@ -84,17 +84,36 @@
             statusText.innerText = "Skala direset. Gunakan kartu referensi lagi.";
         }
 
-        function processFrame() {
-            try {
-                cap.read(src);
-                src.copyTo(dst);
-                
-                // Pre-processing untuk presisi
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                cv.GaussianBlur(gray, gray, new cv.Size(7, 7), 0);
-                cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+function processFrame() {
+    try {
+        cap.read(src);
+        
+        // 1. Ubah ke Grayscale (Hitam Putih Abu-abu)
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        
+        // 2. Tambahkan Blur untuk mengurangi noise piksel
+        cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+        
+        // 3. Thresholding (Mengubah menjadi Hitam Putih Tegas/Biner)
+        // Objek akan jadi Putih, Background jadi Hitam
+        cv.threshold(gray, thresh, 100, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
-                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        // --- Logika Pengukuran Tetap Sama ---
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        
+        // Loop Kontur (seperti kode sebelumnya...)
+        // ... (kode pengukuran Anda di sini) ...
+
+        // 4. TAMPILKAN HASIL HITAM PUTIH KE LAYAR
+        // Ganti 'dst' menjadi 'thresh' jika ingin hitam putih tegas
+        // Ganti 'dst' menjadi 'gray' jika ingin hitam putih abu-abu (lebih halus)
+        cv.imshow('canvasOutput', thresh); 
+
+        requestAnimationFrame(processFrame);
+    } catch (err) {
+        requestAnimationFrame(processFrame);
+    }
+}
 
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
