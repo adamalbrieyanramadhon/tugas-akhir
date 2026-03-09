@@ -1,74 +1,52 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Precision Measure AI</title>
-    <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; }
-        .wrapper { position: relative; display: inline-block; margin-top: 20px; }
-        video, canvas { border: 2px solid #00ff00; border-radius: 8px; }
-        canvas { position: absolute; top: 0; left: 0; }
-        .controls { margin-top: 20px; padding: 15px; background: #333; }
-        button { padding: 10px 20px; cursor: pointer; background: #00ff00; border: none; font-weight: bold; }
-    </style>
-</head>
-<body>
+let pixelsPerMetric = null; // Variabel global untuk menyimpan skala
 
-    <h2>Alat Ukur Presisi (OpenCV.js)</h2>
-    <div class="wrapper">
-        <video id="videoInput" width="640" height="480" autoplay muted playsinline></video>
-        <canvas id="canvasOutput" width="640" height="480"></canvas>
-    </div>
+function processFrame() {
+    cap.read(src);
+    let gray = new cv.Mat();
+    let thresh = new cv.Mat();
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
 
-    <div class="controls">
-        <p id="status">Memuat OpenCV.js...</p>
-        <button id="startBtn" disabled onclick="startProcessing()">Mulai Deteksi</button>
-    </div>
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(7, 7), 0);
+    cv.threshold(gray, thresh, 100, 255, cv.THRESH_BINARY_INV); // Ubah sesuai pencahayaan
 
-    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-    <script>
-        let video = document.getElementById('videoInput');
-        let src, dst, cap;
+    for (let i = 0; i < contours.size(); ++i) {
+        let cnt = contours.get(i);
+        let area = cv.contourArea(cnt);
+        if (area < 2000) continue; // Abaikan objek kecil
 
-        function onOpenCvReady() {
-            document.getElementById('status').innerText = "OpenCV siap! Izinkan kamera.";
-            document.getElementById('startBtn').disabled = false;
+        let rect = cv.minAreaRect(cnt); // Mendapatkan kotak rotasi (lebih presisi dari boundingRect)
+        let vertices = cv.RotatedRect.points(rect);
+        
+        // Gambar garis kontur
+        for (let j = 0; j < 4; j++) {
+            let p1 = vertices[j];
+            let p2 = vertices[(j + 1) % 4];
+            cv.line(src, p1, p2, [0, 255, 0, 255], 2);
         }
 
-        async function startProcessing() {
-            // Akses Kamera
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-            video.srcObject = stream;
-            
-            video.onloadedmetadata = () => {
-                video.play();
-                src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-                dst = new cv.Mat(video.height, video.width, cv.CV_8UC1);
-                cap = new cv.VideoCapture(video);
-                processFrame();
-            };
+        // MENGHITUNG JARAK (Euclidean Distance)
+        let widthPx = Math.sqrt(Math.pow(vertices[0].x - vertices[1].x, 2) + Math.pow(vertices[0].y - vertices[1].y, 2));
+        
+        // JIKA INI ADALAH OBJEK PERTAMA (REFERENSI)
+        // Kita asumsikan objek referensi adalah kartu ATM (85.6 mm)
+        if (pixelsPerMetric === null) {
+            let KNOWN_WIDTH_MM = 85.6; 
+            pixelsPerMetric = widthPx / KNOWN_WIDTH_MM;
         }
 
-        function processFrame() {
-            try {
-                cap.read(src);
-                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                
-                // Gunakan Gaussian Blur untuk mengurangi noise agar presisi meningkat
-                let ksize = new cv.Size(5, 5);
-                cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT);
-                
-                // Canny Edge Detection
-                cv.Canny(dst, dst, 50, 150, 3, false);
-                
-                cv.imshow('canvasOutput', dst);
-                requestAnimationFrame(processFrame);
-            } catch (err) {
-                console.error("Frame processing error:", err);
-            }
-        }
-    </script>
-</body>
-</html>
+        // HITUNG UKURAN ASLI
+        let realWidth = (widthPx / pixelsPerMetric).toFixed(3); // Presisi 3 desimal (0.001)
+
+        cv.putText(src, realWidth + " mm", new cv.Point(rect.center.x, rect.center.y), 
+                   cv.FONT_HERSHEY_SIMPLEX, 0.6, [255, 255, 0, 255], 2);
+    }
+
+    cv.imshow('canvasOutput', src);
+    // Cleanup mat
+    gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    requestAnimationFrame(processFrame);
+}
