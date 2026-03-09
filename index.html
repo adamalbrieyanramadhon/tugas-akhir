@@ -6,7 +6,7 @@
     <title>OpenCV Auto Measure - Radius & Diameter</title>
     <style>
         body { margin: 0; background: #111; color: white; text-align: center; font-family: sans-serif; overflow-x: hidden; }
-        video { display: none; } /* Video asli disembunyikan, kita hanya melihat canvas hasil OpenCV */
+        video { position: absolute; opacity: 0; width: 10px; height: 10px; z-index: -1; }
         canvas { max-width: 100%; height: auto; border: 2px solid #444; margin-top: 10px; border-radius: 8px; }
         #status { background: #0070f3; padding: 10px; font-weight: bold; margin-bottom: 10px; }
         .info-box { background: #222; padding: 15px; margin: 10px auto; width: 90%; border-radius: 8px; text-align: left; font-size: 14px;}
