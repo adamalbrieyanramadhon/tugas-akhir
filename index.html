@@ -3,43 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-Time VMM Scanner - Auto Filter</title>
+    <title>Real-Time VMM - Chamfer & Radius</title>
     <script async src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
     <style>
         body { background-color: #121212; color: #00ff00; font-family: 'Courier New', Courier, monospace; text-align: center; margin: 0; padding: 20px; }
         canvas { border: 2px solid #00ff00; background-color: #000; max-width: 100%; border-radius: 5px; box-shadow: 0 0 15px rgba(0, 255, 0, 0.3); }
-        .panel { background: #222; padding: 15px; margin-bottom: 20px; border-radius: 8px; display: inline-block; border: 1px solid #333; }
+        .panel { background: #222; padding: 15px; margin-bottom: 20px; border-radius: 8px; display: inline-block; border: 1px solid #333; text-align: left; max-width: 640px;}
         button { background: #00ff00; color: #000; border: none; padding: 10px 15px; cursor: pointer; font-weight: bold; border-radius: 4px; margin: 5px; transition: 0.2s; }
         button:hover { background: #00cc00; }
         input { padding: 5px; width: 80px; text-align: center; background: #111; color: #00ff00; border: 1px solid #00ff00; }
         .status-box { margin-top: 10px; font-size: 0.9em; color: #aaa; }
-        .legend { font-size: 0.8em; color: #fff; margin-top: 10px; text-align: left; display: inline-block; }
+        .legend { font-size: 0.8em; color: #fff; margin-top: 10px; display: inline-block; }
     </style>
 </head>
 <body>
-    <h2>⚡ Alat Ukur Profil (Smart Filter)</h2>
-    <div class="panel">
-        <div>
-            <label>Ukuran Benda Referensi (mm): </label>
-            <input type="number" id="refSize" value="85.600" step="0.001">
-        </div>
-        <br>
-        <button id="btnCalibrate">1. Kunci Kalibrasi (Set Skala)</button>
-        <button id="btnReset" style="background: #ff4444; color: white;">Reset</button>
-        <div class="status-box" id="status">Status: Menunggu Engine Computer Vision...</div>
-        <div class="status-box" id="ppmDisplay" style="color: #00ff00; font-weight: bold;">Pixels Per mm (PPM): 0</div>
-        
-        <div class="legend">
-            <b>Indikator Visual:</b><br>
-            <span style="color: yellow;">■ Garis Kuning:</span> Lekukan kontur asli benda<br>
-            <span style="color: #00ff00;">■ Kotak Hijau:</span> Panjang & Lebar maksimal<br>
-            <span style="color: #0088ff;">■ Lingkaran Biru:</span> Area Diameter luar (Otomatis sembunyi untuk benda kotak)
+    <h2 style="text-align: center;">⚡ Auto Measure: Chamfer & Radius</h2>
+    <div style="text-align: center;">
+        <div class="panel">
+            <div>
+                <label>Ukuran Benda Referensi (mm): </label>
+                <input type="number" id="refSize" value="85.600" step="0.001">
+            </div>
+            <div style="margin-top: 10px;">
+                <button id="btnCalibrate">1. Kunci Kalibrasi</button>
+                <button id="btnReset" style="background: #ff4444; color: white;">Reset</button>
+            </div>
+            <div class="status-box" id="status">Status: Menunggu Engine Computer Vision...</div>
+            <div class="status-box" id="ppmDisplay" style="color: #00ff00; font-weight: bold;">Pixels Per mm (PPM): 0</div>
+            
+            <div class="legend">
+                <b>Indikator Visual Otomatis:</b><br>
+                <span style="color: yellow;">■ Garis Kuning:</span> Kontur fisik benda asli<br>
+                <span style="color: #00ff00;">■ Kotak Hijau:</span> Total Dimensi (PxL)<br>
+                <span style="color: #ff66ff;">■ Angka Pink:</span> Panjang tiap sisi & <b>Chamfer</b><br>
+                <span style="color: #0088ff;">■ Lingkaran Biru:</span> <b>Radius (R)</b> untuk benda melengkung/bulat
+            </div>
         </div>
     </div>
-    <br>
     
-    <video id="videoInput" width="640" height="480" style="display:none;" autoplay playsinline></video>
-    <canvas id="canvasOutput" width="640" height="480"></canvas>
+    <div style="text-align: center;">
+        <video id="videoInput" width="640" height="480" style="display:none;" autoplay playsinline></video>
+        <canvas id="canvasOutput" width="640" height="480"></canvas>
+    </div>
 
     <script>
         let video = document.getElementById('videoInput');
@@ -63,7 +68,6 @@
 
         function onOpenCvReady() {
             status.innerHTML = "✅ Engine Siap. Arahkan ke benda referensi, lalu klik Kalibrasi.";
-            
             src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
             dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
             gray = new cv.Mat();
@@ -71,7 +75,6 @@
             contours = new cv.MatVector();
             hierarchy = new cv.Mat();
             cap = new cv.VideoCapture(video);
-            
             streaming = true;
             requestAnimationFrame(processVideo);
         }
@@ -98,7 +101,7 @@
                     let area = cv.contourArea(cnt);
                     
                     if (area > 2000) { 
-                        // 1. Gambar Kontur Asli (Garis Kuning)
+                        // 1. Gambar Kontur Asli
                         let colorContour = new cv.Scalar(0, 255, 255, 255); 
                         let cntVec = new cv.MatVector();
                         cntVec.push_back(cnt);
@@ -117,51 +120,81 @@
                         cv.polylines(dst, verticesBox, true, new cv.Scalar(0, 255, 0, 150), 1); 
                         matObj.delete(); verticesBox.delete();
 
-                        // 3. Pendekatan Poligon untuk deteksi jumlah sudut
+                        // 3. Deteksi Sudut & Ukur Tiap Sisi (Fitur Chamfer)
                         let approx = new cv.Mat();
                         let perimeter = cv.arcLength(cnt, true);
+                        // Toleransi pembacaan sudut
                         cv.approxPolyDP(cnt, approx, 0.02 * perimeter, true); 
                         let totalSudut = approx.rows; 
                         
-                        // CEK: Apakah benda kotak/persegi? (4 Sudut)
-                        let isKotak = (totalSudut === 4);
+                        let isBulat = (totalSudut > 8); // Jika lebih dari 8 sudut, anggap itu radius melengkung
 
-                        // 4. Lingkaran Luar (Hanya digambar jika BUKAN kotak)
+                        // 4. Lingkaran Luar (Hanya digambar jika benda memiliki lengkungan / bulat)
                         let circle = cv.minEnclosingCircle(cnt);
-                        if (!isKotak) {
-                            cv.circle(dst, circle.center, circle.radius, new cv.Scalar(255, 0, 0, 150), 1);
+                        if (isBulat) {
+                            cv.circle(dst, circle.center, circle.radius, new cv.Scalar(255, 0, 0, 200), 2);
                         }
 
                         // 5. Tampilkan Angka Ukuran JIKA sudah kalibrasi
                         if (ppm > 0) {
+                            // Dimensi Total (PxL)
                             let w = (rect.size.width / ppm).toFixed(2);
                             let h = (rect.size.height / ppm).toFixed(2);
                             
-                            let shapeText = "";
-                            if (totalSudut === 3) shapeText = "Segitiga";
-                            else if (totalSudut === 4) shapeText = "Persegi/Balok";
-                            else if (totalSudut === 5) shapeText = "Segi-5 (Chamfer)";
-                            else if (totalSudut > 8) shapeText = "Silinder/Bulat";
-                            else shapeText = `Poligon ${totalSudut} Sudut`;
+                            // ---- FITUR BARU: Ukur panjang tiap garis tepi (Termasuk Chamfer) ----
+                            // Jika bukan lingkaran, kita ukur sisi-sisinya
+                            if (!isBulat) {
+                                for (let j = 0; j < totalSudut; j++) {
+                                    // Ambil koordinat titik awal dan akhir dari sebuah garis
+                                    let x1 = approx.data32S[j * 2];
+                                    let y1 = approx.data32S[j * 2 + 1];
+                                    let x2 = approx.data32S[((j + 1) % totalSudut) * 2];
+                                    let y2 = approx.data32S[((j + 1) % totalSudut) * 2 + 1];
 
-                            let textDim = `Dim: ${w} x ${h} mm`;
-                            let textShape = `Profil: ${shapeText}`;
-                            
-                            // Atur posisi teks agar rapi (dinamis)
+                                    // Hitung jarak pixel lalu ubah ke Milimeter
+                                    let distPx = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+                                    let distMM = (distPx / ppm).toFixed(1);
+
+                                    // Abaikan garis yang sangat kecil (noise debu)
+                                    if (distPx / ppm > 2.0) {
+                                        // Cari titik tengah garis untuk menempatkan teks ukuran
+                                        let midX = (x1 + x2) / 2;
+                                        let midY = (y1 + y2) / 2;
+                                        
+                                        // Cek apakah garis ini pendek (kemungkinan Chamfer)
+                                        let maxSide = Math.max(rect.size.width, rect.size.height) / ppm;
+                                        let isChamfer = (distMM < maxSide * 0.4) && totalSudut > 4;
+
+                                        let label = isChamfer ? `C:${distMM}` : `${distMM}`;
+                                        let textColor = isChamfer ? new cv.Scalar(255, 100, 255, 255) : new cv.Scalar(200, 200, 200, 255);
+                                        
+                                        cv.putText(dst, label, new cv.Point(midX - 10, midY), cv.FONT_HERSHEY_SIMPLEX, 0.45, textColor, 1);
+                                        // Gambar titik sudutnya agar jelas
+                                        cv.circle(dst, new cv.Point(x1, y1), 3, new cv.Scalar(0, 255, 255, 255), -1);
+                                    }
+                                }
+                            }
+
+                            // Teks Utama (Dimensi Total & Profil)
+                            let shapeText = "Profil: ";
+                            if (totalSudut === 3) shapeText += "Segitiga";
+                            else if (totalSudut === 4) shapeText += "Persegi Normal";
+                            else if (totalSudut === 5) shapeText += "Segi-5 (Ada Chamfer)";
+                            else if (totalSudut === 6) shapeText += "Segi-6 (Double Chamfer)";
+                            else if (isBulat) shapeText += "Melengkung / Bulat";
+                            else shapeText += `Poligon ${totalSudut} Sudut`;
+
                             let yPosShape = box[1].y - 5;
-                            let yPosDia = box[1].y - 25;
-                            // Jika kotak, dimensi turun mengisi ruang kosong diameter
-                            let yPosDim = !isKotak ? (box[1].y - 45) : (box[1].y - 25);
+                            let yPosDim = isBulat ? (box[1].y - 45) : (box[1].y - 25);
                             
-                            cv.putText(dst, textShape, new cv.Point(box[1].x, yPosShape), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 200, 255, 255), 2);
-                            cv.putText(dst, textDim, new cv.Point(box[1].x, yPosDim), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 255, 0, 255), 2);
+                            cv.putText(dst, shapeText, new cv.Point(box[1].x, yPosShape), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 200, 255, 255), 2);
+                            cv.putText(dst, `Total Dim: ${w} x ${h} mm`, new cv.Point(box[1].x, yPosDim), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 255, 0, 255), 2);
 
-                            // Munculkan teks diameter HANYA jika bukan kotak
-                            if (!isKotak) {
+                            // Munculkan teks Radius (R) HANYA jika benda terdeteksi lengkung/bulat
+                            if (isBulat) {
                                 let radiusMM = (circle.radius / ppm).toFixed(2);
-                                let diameterMM = (radiusMM * 2).toFixed(2);
-                                let textDia = `Dia: ${diameterMM} (R${radiusMM})`;
-                                cv.putText(dst, textDia, new cv.Point(box[1].x, yPosDia), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(255, 200, 0, 255), 2);
+                                let textDia = `Radius: R${radiusMM}`;
+                                cv.putText(dst, textDia, new cv.Point(box[1].x, box[1].y - 25), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(255, 200, 0, 255), 2);
                             }
                         }
                         approx.delete();
@@ -177,23 +210,16 @@
 
         document.getElementById('btnCalibrate').addEventListener('click', () => {
             if (contours && contours.size() > 0) {
-                let maxArea = 0;
-                let maxCnt = null;
-                
+                let maxArea = 0, maxCnt = null;
                 for (let i = 0; i < contours.size(); i++) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
-                    if (area > maxArea) {
-                        maxArea = area;
-                        maxCnt = cnt;
-                    }
+                    if (area > maxArea) { maxArea = area; maxCnt = cnt; }
                 }
-                
                 if (maxCnt) {
                     let rect = cv.minAreaRect(maxCnt);
                     let pixelDim = Math.max(rect.size.width, rect.size.height);
                     let realDim = parseFloat(document.getElementById('refSize').value);
-                    
                     ppm = pixelDim / realDim; 
                     document.getElementById('ppmDisplay').innerHTML = `Pixels Per mm (PPM): ${ppm.toFixed(5)}`;
                     status.innerHTML = "✅ Kalibrasi Terkunci. Masukkan benda kerja!";
@@ -204,15 +230,13 @@
         });
 
         document.getElementById('btnReset').addEventListener('click', () => {
-            ppm = 0;
-            document.getElementById('ppmDisplay').innerHTML = `Pixels Per mm (PPM): 0`;
+            ppm = 0; document.getElementById('ppmDisplay').innerHTML = `Pixels Per mm (PPM): 0`;
             status.innerHTML = "🔄 Reset berhasil. Silakan kalibrasi ulang.";
         });
 
         let checkOpenCV = setInterval(() => {
             if (typeof cv !== 'undefined' && cv.Mat) {
-                clearInterval(checkOpenCV);
-                onOpenCvReady();
+                clearInterval(checkOpenCV); onOpenCvReady();
             }
         }, 500);
     </script>
