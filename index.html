@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-Time VMM Scanner - Presisi Tinggi</title>
+    <title>Real-Time VMM Scanner - Auto Filter</title>
     <script async src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
     <style>
         body { background-color: #121212; color: #00ff00; font-family: 'Courier New', Courier, monospace; text-align: center; margin: 0; padding: 20px; }
@@ -17,7 +17,7 @@
     </style>
 </head>
 <body>
-    <h2>⚡ Alat Ukur Profil (Fit To Object)</h2>
+    <h2>⚡ Alat Ukur Profil (Smart Filter)</h2>
     <div class="panel">
         <div>
             <label>Ukuran Benda Referensi (mm): </label>
@@ -31,9 +31,9 @@
         
         <div class="legend">
             <b>Indikator Visual:</b><br>
-            <span style="color: yellow;">■ Garis Kuning:</span> Lekukan kontur asli benda (Fitur Baru)<br>
+            <span style="color: yellow;">■ Garis Kuning:</span> Lekukan kontur asli benda<br>
             <span style="color: #00ff00;">■ Kotak Hijau:</span> Panjang & Lebar maksimal<br>
-            <span style="color: #0088ff;">■ Lingkaran Biru:</span> Area Diameter luar
+            <span style="color: #0088ff;">■ Lingkaran Biru:</span> Area Diameter luar (Otomatis sembunyi untuk benda kotak)
         </div>
     </div>
     <br>
@@ -49,7 +49,6 @@
         let streaming = false;
         let src, dst, gray, edges, contours, hierarchy, cap;
 
-        // Akses Kamera
         navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 }, focusMode: "continuous" }, 
             audio: false 
@@ -62,7 +61,6 @@
             status.innerHTML = "❌ Gagal akses kamera.";
         });
 
-        // Tunggu OpenCV dimuat
         function onOpenCvReady() {
             status.innerHTML = "✅ Engine Siap. Arahkan ke benda referensi, lalu klik Kalibrasi.";
             
@@ -84,37 +82,30 @@
                 cap.read(src);
                 src.copyTo(dst);
                 
-                // Pre-processing agar kontur lebih ketat
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
                 cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-                
-                // Deteksi Tepi (Canny)
                 cv.Canny(gray, edges, 50, 150, 3, false);
                 
-                // Morfologi: Menutup celah/noise agar bentuk lebih solid (Fitur Baru)
                 let M = cv.Mat.ones(3, 3, cv.CV_8U);
                 cv.dilate(edges, edges, M, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
                 cv.erode(edges, edges, M, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
                 M.delete();
 
-                // Hanya cari garis terluar objek (RETR_EXTERNAL)
                 cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
                     
-                    // Filter area: Abaikan benda yang terlalu kecil (debu/noise)
                     if (area > 2000) { 
-                        
-                        // 1. Gambar Kontur Asli (Garis Kuning yang mengikuti lekuk padat objek)
-                        let colorContour = new cv.Scalar(0, 255, 255, 255); // Warna Kuning
+                        // 1. Gambar Kontur Asli (Garis Kuning)
+                        let colorContour = new cv.Scalar(0, 255, 255, 255); 
                         let cntVec = new cv.MatVector();
                         cntVec.push_back(cnt);
                         cv.drawContours(dst, cntVec, 0, colorContour, 2, cv.LINE_8, hierarchy, 0);
                         cntVec.delete();
 
-                        // 2. Dapatkan Bounding Box (Garis Hijau putus-putus)
+                        // 2. Dapatkan Bounding Box
                         let rect = cv.minAreaRect(cnt);
                         let box = cv.RotatedRect.points(rect);
                         let verticesBox = new cv.MatVector();
@@ -123,7 +114,6 @@
                             box[2].x, box[2].y, box[3].x, box[3].y
                         ]);
                         verticesBox.push_back(matObj);
-                        // Bounding Box digambar lebih tipis agar tidak mengganggu kontur asli
                         cv.polylines(dst, verticesBox, true, new cv.Scalar(0, 255, 0, 150), 1); 
                         matObj.delete(); verticesBox.delete();
 
@@ -132,17 +122,20 @@
                         let perimeter = cv.arcLength(cnt, true);
                         cv.approxPolyDP(cnt, approx, 0.02 * perimeter, true); 
                         let totalSudut = approx.rows; 
+                        
+                        // CEK: Apakah benda kotak/persegi? (4 Sudut)
+                        let isKotak = (totalSudut === 4);
 
-                        // 4. Lingkaran Luar (Radius)
+                        // 4. Lingkaran Luar (Hanya digambar jika BUKAN kotak)
                         let circle = cv.minEnclosingCircle(cnt);
-                        cv.circle(dst, circle.center, circle.radius, new cv.Scalar(255, 0, 0, 150), 1);
+                        if (!isKotak) {
+                            cv.circle(dst, circle.center, circle.radius, new cv.Scalar(255, 0, 0, 150), 1);
+                        }
 
                         // 5. Tampilkan Angka Ukuran JIKA sudah kalibrasi
                         if (ppm > 0) {
                             let w = (rect.size.width / ppm).toFixed(2);
                             let h = (rect.size.height / ppm).toFixed(2);
-                            let radiusMM = (circle.radius / ppm).toFixed(2);
-                            let diameterMM = (radiusMM * 2).toFixed(2);
                             
                             let shapeText = "";
                             if (totalSudut === 3) shapeText = "Segitiga";
@@ -152,13 +145,24 @@
                             else shapeText = `Poligon ${totalSudut} Sudut`;
 
                             let textDim = `Dim: ${w} x ${h} mm`;
-                            let textDia = `Dia: ${diameterMM} (R${radiusMM})`;
                             let textShape = `Profil: ${shapeText}`;
                             
-                            // Posisi Teks Mengikuti Objek
-                            cv.putText(dst, textDim, new cv.Point(box[1].x, box[1].y - 45), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 255, 0, 255), 2);
-                            cv.putText(dst, textDia, new cv.Point(box[1].x, box[1].y - 25), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(255, 200, 0, 255), 2);
-                            cv.putText(dst, textShape, new cv.Point(box[1].x, box[1].y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 200, 255, 255), 2);
+                            // Atur posisi teks agar rapi (dinamis)
+                            let yPosShape = box[1].y - 5;
+                            let yPosDia = box[1].y - 25;
+                            // Jika kotak, dimensi turun mengisi ruang kosong diameter
+                            let yPosDim = !isKotak ? (box[1].y - 45) : (box[1].y - 25);
+                            
+                            cv.putText(dst, textShape, new cv.Point(box[1].x, yPosShape), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 200, 255, 255), 2);
+                            cv.putText(dst, textDim, new cv.Point(box[1].x, yPosDim), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(0, 255, 0, 255), 2);
+
+                            // Munculkan teks diameter HANYA jika bukan kotak
+                            if (!isKotak) {
+                                let radiusMM = (circle.radius / ppm).toFixed(2);
+                                let diameterMM = (radiusMM * 2).toFixed(2);
+                                let textDia = `Dia: ${diameterMM} (R${radiusMM})`;
+                                cv.putText(dst, textDia, new cv.Point(box[1].x, yPosDia), cv.FONT_HERSHEY_SIMPLEX, 0.6, new cv.Scalar(255, 200, 0, 255), 2);
+                            }
                         }
                         approx.delete();
                     }
@@ -171,7 +175,6 @@
             }
         }
 
-        // Logika Tombol Kalibrasi
         document.getElementById('btnCalibrate').addEventListener('click', () => {
             if (contours && contours.size() > 0) {
                 let maxArea = 0;
