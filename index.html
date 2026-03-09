@@ -3,19 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Precision Measure AI</title>
+    <title>Precision Measure AI - Black & White</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; }
-        .wrapper { position: relative; display: inline-block; margin-top: 20px; }
-        video, canvas { border: 2px solid #00ff00; border-radius: 8px; }
-        canvas { position: absolute; top: 0; left: 0; }
-        .controls { margin-top: 20px; padding: 15px; background: #333; }
-        button { padding: 10px 20px; cursor: pointer; background: #00ff00; border: none; font-weight: bold; }
+        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; padding: 20px; }
+        .wrapper { position: relative; display: inline-block; background: #000; }
+        video { display: none; } /* Sembunyikan video asli agar fokus ke hasil B&W */
+        canvas { border: 2px solid #00ff00; border-radius: 8px; max-width: 100%; }
+        .controls { margin-top: 20px; padding: 15px; background: #333; border-radius: 10px; }
+        .data { font-size: 24px; color: #00ff00; font-family: monospace; margin: 10px 0; }
+        button { padding: 12px 24px; cursor: pointer; background: #00ff00; border: none; font-weight: bold; border-radius: 5px; }
+        button:disabled { background: #555; }
     </style>
 </head>
 <body>
 
-    <h2>Alat Ukur Presisi (OpenCV.js)</h2>
+    <h2>Alat Ukur Otomatis (Mode Canny)</h2>
+    
     <div class="wrapper">
         <video id="videoInput" width="640" height="480" autoplay muted playsinline></video>
         <canvas id="canvasOutput" width="640" height="480"></canvas>
@@ -23,29 +26,39 @@
 
     <div class="controls">
         <p id="status">Memuat OpenCV.js...</p>
-        <button id="startBtn" disabled onclick="startProcessing()">Mulai Deteksi</button>
+        <div class="data" id="result">0.000 mm</div>
+        <button id="startBtn" disabled onclick="startProcessing()">MULAI DETEKSI</button>
+        <button onclick="ppm = null" style="background: #ff4444; color: white;">RESET SKALA</button>
     </div>
 
     <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
 
     <script>
         let video = document.getElementById('videoInput');
-        let src, dst, cap;
+        let statusText = document.getElementById('status');
+        let resultDiv = document.getElementById('result');
+        let src, gray, edge, contours, hierarchy, cap;
+        let ppm = null; // Pixels Per Metric
 
         function onOpenCvReady() {
-            document.getElementById('status').innerText = "OpenCV siap! Izinkan kamera.";
+            statusText.innerText = "OpenCV Siap! Gunakan kartu ATM sebagai referensi pertama.";
             document.getElementById('startBtn').disabled = false;
         }
 
         async function startProcessing() {
-            // Akses Kamera
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: 640, height: 480 } 
+            });
             video.srcObject = stream;
             
             video.onloadedmetadata = () => {
                 video.play();
+                // Inisialisasi memori
                 src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-                dst = new cv.Mat(video.height, video.width, cv.CV_8UC1);
+                gray = new cv.Mat();
+                edge = new cv.Mat();
+                contours = new cv.MatVector();
+                hierarchy = new cv.Mat();
                 cap = new cv.VideoCapture(video);
                 processFrame();
             };
@@ -54,19 +67,58 @@
         function processFrame() {
             try {
                 cap.read(src);
-                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
                 
-                // Gunakan Gaussian Blur untuk mengurangi noise agar presisi meningkat
+                // 1. Ubah ke Abu-abu
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                
+                // 2. Blur untuk presisi
                 let ksize = new cv.Size(5, 5);
-                cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT);
+                cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
                 
-                // Canny Edge Detection
-                cv.Canny(dst, dst, 50, 150, 3, false);
+                // 3. Canny Edge (Membuat tampilan Hitam Putih Garis)
+                cv.Canny(gray, edge, 50, 150, 3, false);
                 
-                cv.imshow('canvasOutput', dst);
+                // 4. Deteksi Kontur dari hasil Canny
+                cv.findContours(edge, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    
+                    if (area > 5000) { // Hanya proses objek besar
+                        let rect = cv.minAreaRect(cnt);
+                        let vertices = cv.RotatedRect.points(rect);
+                        
+                        // Gambar kotak ukur pada tampilan B&W
+                        for (let j = 0; j < 4; j++) {
+                            let p1 = vertices[j];
+                            let p2 = vertices[(j + 1) % 4];
+                            cv.line(edge, p1, p2, [255, 255, 255, 255], 2);
+                        }
+
+                        // Hitung panjang dalam piksel
+                        let widthPx = Math.hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y);
+
+                        // Kalibrasi otomatis (Gunakan benda 85.6mm/Kartu ATM)
+                        if (ppm === null) {
+                            ppm = widthPx / 85.6;
+                        }
+
+                        let realWidth = (widthPx / ppm).toFixed(3);
+                        resultDiv.innerText = realWidth + " mm";
+                        
+                        cv.putText(edge, realWidth + "mm", new cv.Point(rect.center.x, rect.center.y), 
+                                   cv.FONT_HERSHEY_SIMPLEX, 0.6, [255, 255, 255, 255], 2);
+                    }
+                }
+
+                // Tampilkan hasil Canny yang sudah diberi garis ukur
+                cv.imshow('canvasOutput', edge);
+                
                 requestAnimationFrame(processFrame);
             } catch (err) {
-                console.error("Frame processing error:", err);
+                console.error(err);
+                requestAnimationFrame(processFrame);
             }
         }
     </script>
