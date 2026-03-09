@@ -3,107 +3,148 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Auto Measure</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <title>OpenCV Auto Measure - Radius & Diameter</title>
     <style>
-        body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; }
-        video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        .overlay { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
-                   background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; text-align: center; width: 80%; }
-        .btn-switch { background: #0070f3; color: white; border: none; padding: 10px; border-radius: 5px; margin-top: 10px; cursor: pointer; }
+        body { margin: 0; background: #111; color: white; text-align: center; font-family: sans-serif; overflow-x: hidden; }
+        video { display: none; } /* Video asli disembunyikan, kita hanya melihat canvas hasil OpenCV */
+        canvas { max-width: 100%; height: auto; border: 2px solid #444; margin-top: 10px; border-radius: 8px; }
+        #status { background: #0070f3; padding: 10px; font-weight: bold; margin-bottom: 10px; }
+        .info-box { background: #222; padding: 15px; margin: 10px auto; width: 90%; border-radius: 8px; text-align: left; font-size: 14px;}
     </style>
 </head>
 <body>
 
-    <div id="container">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-        
-        <div class="overlay">
-            <div id="info">Sedang memuat AI...</div>
-            <button class="btn-switch" onclick="switchCamera()">🔄 Ganti Kamera</button>
-        </div>
+    <div id="status">Memuat Sistem OpenCV... (Harap tunggu)</div>
+    
+    <video id="video" autoplay playsinline muted width="640" height="480"></video>
+    
+    <canvas id="canvasOut"></canvas>
+
+    <div class="info-box">
+        <strong>Cara Kerja:</strong> Hadapkan kamera ke objek berbentuk lingkaran (seperti koin atau tutup botol) dengan latar belakang yang kontras.
     </div>
+
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
 
     <script>
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const info = document.getElementById('info');
+        const canvasOut = document.getElementById('canvasOut');
+        const statusText = document.getElementById('status');
+        let streaming = false;
         
-        let model;
-        let currentFacingMode = 'environment';
-        let pixelsPerMm = null;
-        const REF_REAL_WIDTH = 85.6; // Lebar kartu standar dalam mm
+        // Variabel Matriks OpenCV
+        let src, dst, gray, edges, contours, hierarchy;
 
-        async function setupApp() {
-            info.innerText = "Memuat Model AI...";
-            model = await cocoSsd.load();
-            startCamera();
+        // --- KALIBRASI UKURAN ---
+        // Ini adalah rasio piksel ke milimeter. 
+        // Di dunia nyata, Anda harus meletakkan koin referensi untuk mendapatkan angka ini.
+        // Untuk contoh ini, kita asumsikan 1 mm = 6.5 piksel di layar Anda.
+        let PIXELS_PER_MM = 6.5; 
+
+        function onOpenCvReady() {
+            cv['onRuntimeInitialized'] = () => {
+                statusText.innerText = "Sistem Siap. Membuka Kamera...";
+                statusText.style.background = "#d97706";
+                startCamera();
+            };
         }
 
-        async function startCamera() {
-            if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: currentFacingMode }
-            });
-            video.srcObject = stream;
-            video.onloadeddata = () => predict();
-        }
-
-        function switchCamera() {
-            currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-            startCamera();
-        }
-
-        async function predict() {
-            const predictions = await model.detect(video);
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // 1. Cari Referensi Dulu (Misal kartu/dompet/hp)
-            predictions.forEach(p => {
-                if (p.class === 'book' || p.class === 'cell phone') {
-                    const pixelWidth = p.bbox[2];
-                    pixelsPerMm = pixelWidth / REF_REAL_WIDTH;
-                }
-            });
-
-            // 2. Gambar dan Ukur Semua Benda yang Terdeteksi
-            predictions.forEach(p => {
-                const [x, y, width, height] = p.bbox;
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: 640, height: 480 }, audio: false })
+            .then(function(stream) {
+                video.srcObject = stream;
+                video.play();
+                streaming = true;
                 
-                // Gambar Box
-                ctx.strokeStyle = pixelsPerMm ? "#00FF00" : "#FF0000";
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x, y, width, height);
-
-                // Hitung Dimensi
-                let label = p.class;
-                if (pixelsPerMm) {
-                    // PERUBAHAN ADA DI SINI: Menggunakan .toFixed(3) untuk presisi 0.001
-                    const wmm = (width / pixelsPerMm).toFixed(3);
-                    const hmm = (height / pixelsPerMm).toFixed(3);
-                    label += ` ${wmm} x ${hmm} mm`;
-                    info.innerText = "Sistem Aktif: Mengukur Otomatis";
-                } else {
-                    info.innerText = "Letakkan Kartu ATM/HP sebagai referensi ukuran";
-                }
-
-                // Gambar Label
-                ctx.fillStyle = ctx.strokeStyle;
-                ctx.font = "bold 20px Arial"; // Sedikit dikecilkan agar teks tidak terpotong
-                ctx.fillText(label, x, y > 30 ? y - 10 : 30);
+                video.addEventListener('canplay', () => {
+                    statusText.innerText = "🟢 Sistem Aktif: Mengukur Lingkaran";
+                    statusText.style.background = "#16a34a";
+                    initOpenCVObjects();
+                    requestAnimationFrame(processVideo);
+                });
+            })
+            .catch(function(err) {
+                statusText.innerText = "Gagal mengakses kamera: " + err;
+                statusText.style.background = "#dc2626";
             });
-
-            requestAnimationFrame(predict);
         }
 
-        setupApp();
+        function initOpenCVObjects() {
+            canvasOut.width = video.videoWidth;
+            canvasOut.height = video.videoHeight;
+            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            gray = new cv.Mat();
+            edges = new cv.Mat();
+            contours = new cv.MatVector();
+            hierarchy = new cv.Mat();
+        }
+
+        function processVideo() {
+            if (!streaming) return;
+
+            // Ambil frame dari video
+            let cap = new cv.VideoCapture(video);
+            cap.read(src);
+            src.copyTo(dst); // dst adalah kanvas yang akan kita gambar
+
+            // 1. Ubah gambar ke Hitam Putih (Grayscale)
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+            // 2. Haluskan gambar (Blur) untuk mengurangi noise/titik-titik cahaya
+            cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+
+            // 3. Deteksi Garis Tepi (Canny Edge Detection)
+            cv.Canny(gray, edges, 50, 150);
+
+            // 4. Cari Kontur (Garis yang saling menyambung)
+            cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+
+                // Abaikan objek yang terlalu kecil (noise debu/cahaya)
+                if (area > 2000) {
+                    // Buat lingkaran prediksi yang membungkus kontur tersebut
+                    let circle = cv.minEnclosingCircle(cnt);
+                    
+                    // Hitung tingkat "kebulatan" (Circularity)
+                    // Tujuannya agar HP tidak mendeteksi buku/kotak sebagai lingkaran
+                    let circleArea = Math.PI * (circle.radius * circle.radius);
+                    let circularity = area / circleArea;
+
+                    // Jika tingkat kebulatannya di atas 75%, kita anggap itu lingkaran valid
+                    if (circularity > 0.75) {
+                        let center = circle.center;
+                        let radiusPx = circle.radius;
+                        let diameterPx = radiusPx * 2;
+
+                        // Konversi ke mm dengan presisi 0.001
+                        let radiusMm = (radiusPx / PIXELS_PER_MM).toFixed(3);
+                        let diameterMm = (diameterPx / PIXELS_PER_MM).toFixed(3);
+
+                        // Visualisasi ke layar
+                        // Gambar garis lingkaran (Warna: Hijau)
+                        cv.circle(dst, center, radiusPx, [0, 255, 0, 255], 3);
+                        
+                        // Gambar titik tengah (Warna: Merah)
+                        cv.circle(dst, center, 4, [255, 0, 0, 255], -1);
+
+                        // Tulis teks R dan D
+                        let font = cv.FONT_HERSHEY_SIMPLEX;
+                        cv.putText(dst, `R: ${radiusMm} mm`, {x: center.x - 50, y: center.y - 15}, font, 0.7, [0, 255, 0, 255], 2);
+                        cv.putText(dst, `D: ${diameterMm} mm`, {x: center.x - 50, y: center.y + 20}, font, 0.7, [0, 255, 0, 255], 2);
+                    }
+                }
+            }
+
+            // Tampilkan hasil proses ke Canvas
+            cv.imshow('canvasOut', dst);
+            
+            // Loop terus menerus
+            requestAnimationFrame(processVideo);
+        }
     </script>
 </body>
 </html>
