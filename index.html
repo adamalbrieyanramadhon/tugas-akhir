@@ -1,110 +1,26 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Auto Measure</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-    <style>
-        body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; }
-        video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        .overlay { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
-                   background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; text-align: center; width: 80%; }
-        .btn-switch { background: #0070f3; color: white; border: none; padding: 10px; border-radius: 5px; margin-top: 10px; cursor: pointer; }
-    </style>
-</head>
-<body>
+// Variabel Kalibrasi (Contoh: Panjang Kartu ATM = 85.6 mm)
+const KNOWN_WIDTH_MM = 85.6; 
 
-    <div id="container">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-        
-        <div class="overlay">
-            <div id="info">Sedang memuat AI...</div>
-            <button class="btn-switch" onclick="switchCamera()">🔄 Ganti Kamera</button>
-        </div>
-    </div>
+function measureObject(contours, hierarchy) {
+    // 1. Cari kontur terbesar (asumsi: ini adalah benda referensi/kartu)
+    let refContour = contours.get(0); 
+    let rect = cv.minAreaRect(refContour);
+    let pixelWidth = Math.max(rect.size.width, rect.size.height);
 
-    <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const info = document.getElementById('info');
-        
-        let model;
-        let currentFacingMode = 'environment';
-        let pixelsPerMm = null;
-        const REF_REAL_WIDTH = 85.6; // Lebar kartu standar dalam mm
+    // 2. Hitung Rasio: Pixel per Millimeter (PPM)
+    let ppm = pixelWidth / KNOWN_WIDTH_MM;
 
-        async function setupApp() {
-            info.innerText = "Memuat Model AI...";
-            model = await cocoSsd.load();
-            startCamera();
-        }
+    // 3. Ukur kontur lainnya
+    for (let i = 1; i < contours.size(); ++i) {
+        let cnt = contours.get(i);
+        let area = cv.contourArea(cnt);
+        if (area < 500) continue; // Abaikan noise kecil
 
-        async function startCamera() {
-            if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: currentFacingMode }
-            });
-            video.srcObject = stream;
-            video.onloadeddata = () => predict();
-        }
+        let box = cv.minAreaRect(cnt);
+        let widthMM = box.size.width / ppm;
+        let heightMM = box.size.height / ppm;
 
-        function switchCamera() {
-            currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-            startCamera();
-        }
-
-        async function predict() {
-            const predictions = await model.detect(video);
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // 1. Cari Referensi Dulu (Misal kartu/dompet/hp)
-            predictions.forEach(p => {
-                if (p.class === 'book' || p.class === 'cell phone') {
-                    const pixelWidth = p.bbox[2];
-                    pixelsPerMm = pixelWidth / REF_REAL_WIDTH;
-                }
-            });
-
-            // 2. Gambar dan Ukur Semua Benda yang Terdeteksi
-            predictions.forEach(p => {
-                const [x, y, width, height] = p.bbox;
-                
-                // Gambar Box
-                ctx.strokeStyle = pixelsPerMm ? "#00FF00" : "#FF0000";
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x, y, width, height);
-
-                // Hitung Dimensi
-                let label = p.class;
-                if (pixelsPerMm) {
-                    // PERUBAHAN ADA DI SINI: Menggunakan .toFixed(3) untuk presisi 0.001
-                    const wmm = (width / pixelsPerMm).toFixed(3);
-                    const hmm = (height / pixelsPerMm).toFixed(3);
-                    label += ` ${wmm} x ${hmm} mm`;
-                    info.innerText = "Sistem Aktif: Mengukur Otomatis";
-                } else {
-                    info.innerText = "Letakkan Kartu ATM/HP sebagai referensi ukuran";
-                }
-
-                // Gambar Label
-                ctx.fillStyle = ctx.strokeStyle;
-                ctx.font = "bold 20px Arial"; // Sedikit dikecilkan agar teks tidak terpotong
-                ctx.fillText(label, x, y > 30 ? y - 10 : 30);
-            });
-
-            requestAnimationFrame(predict);
-        }
-
-        setupApp();
-    </script>
-</body>
-</html>
-
+        console.log(`Benda ${i}: ${widthMM.toFixed(3)} mm x ${heightMM.toFixed(3)} mm`);
+        // .toFixed(3) akan menampilkan 3 angka di belakang koma (0.001)
+    }
+}
