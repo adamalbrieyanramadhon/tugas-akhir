@@ -3,105 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistem Ukur Presisi Black & White</title>
+    <title>Precision Measure AI</title>
     <style>
-        body { font-family: sans-serif; background: #000; color: #0f0; text-align: center; margin: 0; }
-        .container { position: relative; width: 100%; max-width: 640px; margin: auto; }
-        /* Sembunyikan video asli agar tidak menumpuk */
-        video { display: none; } 
-        /* Tampilkan hanya hasil olahan OpenCV */
-        canvas { width: 100%; border: 1px solid #333; }
-        .panel { background: #111; padding: 15px; border-top: 2px solid #0f0; position: fixed; bottom: 0; width: 100%; }
-        .measure-val { font-size: 32px; font-family: monospace; }
-        button { padding: 10px 20px; background: #0f0; border: none; font-weight: bold; border-radius: 5px; }
+        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; }
+        .wrapper { position: relative; display: inline-block; margin-top: 20px; }
+        video, canvas { border: 2px solid #00ff00; border-radius: 8px; }
+        canvas { position: absolute; top: 0; left: 0; }
+        .controls { margin-top: 20px; padding: 15px; background: #333; }
+        button { padding: 10px 20px; cursor: pointer; background: #00ff00; border: none; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h3 style="margin: 10px;">PRECISE MEASURE (B&W MODE)</h3>
-    
-    <div class="container">
+    <h2>Alat Ukur Presisi (OpenCV.js)</h2>
+    <div class="wrapper">
         <video id="videoInput" width="640" height="480" autoplay muted playsinline></video>
         <canvas id="canvasOutput" width="640" height="480"></canvas>
     </div>
 
-    <div class="panel">
-        <div id="status">Memuat Engine...</div>
-        <div class="measure-val" id="result">0.000 mm</div>
-        <button id="startBtn" onclick="initApp()" disabled>MULAI SCAN</button>
-        <button onclick="location.reload()" style="background:#555; color:#fff;">RESET</button>
+    <div class="controls">
+        <p id="status">Memuat OpenCV.js...</p>
+        <button id="startBtn" disabled onclick="startProcessing()">Mulai Deteksi</button>
     </div>
 
-    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="cvReady()"></script>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
 
     <script>
         let video = document.getElementById('videoInput');
-        let resultDiv = document.getElementById('result');
-        let ppm = null; // Pixels Per Metric
+        let src, dst, cap;
 
-        function cvReady() {
-            document.getElementById('status').innerText = "Engine Siap!";
+        function onOpenCvReady() {
+            document.getElementById('status').innerText = "OpenCV siap! Izinkan kamera.";
             document.getElementById('startBtn').disabled = false;
         }
 
-        async function initApp() {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: 640, height: 480 } 
-            });
+        async function startProcessing() {
+            // Akses Kamera
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
             video.srcObject = stream;
-            video.play();
-            process();
+            
+            video.onloadedmetadata = () => {
+                video.play();
+                src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+                dst = new cv.Mat(video.height, video.width, cv.CV_8UC1);
+                cap = new cv.VideoCapture(video);
+                processFrame();
+            };
         }
 
-        function process() {
-            let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-            let gray = new cv.Mat();
-            let thresh = new cv.Mat();
-            let contours = new cv.MatVector();
-            let hierarchy = new cv.Mat();
-            let cap = new cv.VideoCapture(video);
-
-            function frame() {
-                try {
-                    cap.read(src);
-                    
-                    // PROSES HITAM PUTIH (B&W)
-                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY); // Menjadi Abu-abu
-                    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-                    // Threshold membuat gambar jadi HITAM TEGAS dan PUTIH TEGAS (Biner)
-                    cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-
-                    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-                    for (let i = 0; i < contours.size(); ++i) {
-                        let cnt = contours.get(i);
-                        if (cv.contourArea(cnt) < 3000) continue;
-
-                        let rect = cv.minAreaRect(cnt);
-                        let vertices = cv.RotatedRect.points(rect);
-                        
-                        // Gambar garis di atas gambar Hitam Putih
-                        for (let j = 0; j < 4; j++) {
-                            cv.line(thresh, vertices[j], vertices[(j + 1) % 4], [255, 255, 255, 255], 2);
-                        }
-
-                        let distPx = Math.hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y);
-
-                        // Kalibrasi otomatis menggunakan Kartu ATM (85.6mm)
-                        if (ppm === null) ppm = distPx / 85.6;
-
-                        let mm = (distPx / ppm).toFixed(3);
-                        resultDiv.innerText = mm + " mm";
-                    }
-
-                    cv.imshow('canvasOutput', thresh); // Tampilkan hasil Hitam Putih
-                    requestAnimationFrame(frame);
-                } catch (e) {
-                    console.log(e);
-                    requestAnimationFrame(frame);
-                }
+        function processFrame() {
+            try {
+                cap.read(src);
+                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+                
+                // Gunakan Gaussian Blur untuk mengurangi noise agar presisi meningkat
+                let ksize = new cv.Size(5, 5);
+                cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT);
+                
+                // Canny Edge Detection
+                cv.Canny(dst, dst, 50, 150, 3, false);
+                
+                cv.imshow('canvasOutput', dst);
+                requestAnimationFrame(processFrame);
+            } catch (err) {
+                console.error("Frame processing error:", err);
             }
-            frame();
         }
     </script>
 </body>
