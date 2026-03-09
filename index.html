@@ -5,44 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Precision Measure 0.001</title>
     <style>
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: #121212; color: white; text-align: center; margin: 0; padding: 0; 
-        }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #121212; color: white; text-align: center; margin: 0; padding: 0; }
         .header { background: #1a1a1a; padding: 10px; border-bottom: 2px solid #00ff00; }
         .header h3 { margin: 0; color: #00ff00; }
         
         .container { position: relative; width: 100%; max-width: 640px; margin: 15px auto; }
-        video { display: none; } /* Sembunyikan video asli */
+        video { display: none; }
         canvas { width: 100%; border: 1px solid #333; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,255,0,0.1); }
         
-        .panel { 
-            background: #1e1e1e; max-width: 600px; margin: 10px auto; padding: 15px; 
-            border-radius: 8px; text-align: left; border-left: 4px solid #00ff00;
-        }
-        .data-grid { 
-            display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; 
-        }
-        .data-box { 
-            background: #2a2a2a; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 16px;
-        }
+        .panel { background: #1e1e1e; max-width: 600px; margin: 10px auto; padding: 15px; border-radius: 8px; text-align: left; border-left: 4px solid #00ff00; }
+        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        .data-box { background: #2a2a2a; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 16px; }
         .data-box span { color: #00ff00; font-weight: bold; font-size: 18px; float: right; }
         
         .controls { margin-top: 15px; text-align: center; }
-        button { 
-            padding: 10px 20px; font-size: 14px; cursor: pointer; background: #00ff00; 
-            color: #000; border: none; border-radius: 5px; font-weight: bold; margin: 5px;
-        }
+        button { padding: 10px 20px; font-size: 14px; cursor: pointer; background: #00ff00; color: #000; border: none; border-radius: 5px; font-weight: bold; margin: 5px; }
         button:disabled { background: #444; color: #888; cursor: not-allowed; }
         .btn-reset { background: #ff4444; color: white; }
         
         #status { font-size: 14px; color: #aaa; margin-bottom: 10px; text-align: center; }
+        #shape-type { font-weight: bold; color: #00ffff; text-align: center; display: block; margin-top: 10px; }
     </style>
 </head>
 <body>
 
     <div class="header">
-        <h3>📏 PRECISION MEASURE (B&W MODE)</h3>
+        <h3>📏 PRECISION MEASURE (GEOMETRY MODE)</h3>
     </div>
     
     <div class="container">
@@ -51,7 +39,8 @@
     </div>
 
     <div class="panel">
-        <div id="status">⏳ Memuat OpenCV.js Engine...</div>
+        <div id="status">⏳ Memuat Engine OpenCV...</div>
+        <span id="shape-type">Deteksi Bentuk: Menunggu Objek...</span>
         
         <div class="data-grid">
             <div class="data-box">Panjang (P): <span id="val-p">0.000</span></div>
@@ -71,7 +60,7 @@
 
     <script>
         let video = document.getElementById('videoInput');
-        let ppm = null; // Pixels Per Metric (Skala Kalibrasi)
+        let ppm = null; 
         let src, gray, edge, contours, hierarchy, cap;
 
         function cvReady() {
@@ -88,9 +77,8 @@
                 
                 video.onloadedmetadata = () => {
                     video.play();
-                    document.getElementById('status').innerText = "📷 Kamera aktif. Letakkan kartu ATM (85.6mm) untuk kalibrasi awal.";
+                    document.getElementById('status').innerText = "📷 Kamera aktif. Letakkan referensi (85.6mm) untuk kalibrasi.";
                     
-                    // Inisialisasi Matriks memori OpenCV
                     src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
                     gray = new cv.Mat();
                     edge = new cv.Mat();
@@ -101,14 +89,14 @@
                     processFrame();
                 };
             } catch (err) {
-                document.getElementById('status').innerText = "❌ Error: Akses kamera ditolak atau tidak tersedia.";
-                console.error(err);
+                document.getElementById('status').innerText = "❌ Error: Akses kamera ditolak.";
             }
         }
 
         function resetSkala() {
             ppm = null;
             document.getElementById('status').innerText = "🔄 Skala direset. Letakkan kembali benda referensi.";
+            document.getElementById('shape-type').innerText = "Deteksi Bentuk: Menunggu Objek...";
             document.getElementById('val-p').innerText = "0.000";
             document.getElementById('val-l').innerText = "0.000";
             document.getElementById('val-d').innerText = "0.000";
@@ -121,20 +109,16 @@
             try {
                 cap.read(src);
                 
-                // 1. Pre-processing: Grayscale & Blur
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
                 cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-                
-                // 2. Canny Edge Detection (Tampilan Hitam Putih Garis)
                 cv.Canny(gray, edge, 50, 150, 3, false);
                 
-                // 3. Cari Kontur
                 cv.findContours(edge, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
                 let largestArea = 0;
                 let bestContourIndex = -1;
 
-                // Cari objek terbesar di layar untuk mengurangi noise
+                // 1. Cari objek terbesar
                 for (let i = 0; i < contours.size(); ++i) {
                     let area = cv.contourArea(contours.get(i));
                     if (area > 3000 && area > largestArea) {
@@ -146,78 +130,91 @@
                 if (bestContourIndex !== -1) {
                     let cnt = contours.get(bestContourIndex);
                     
-                    // --- LOGIKA GEOMETRI ---
-                    
-                    // A. Bounding Box (Panjang & Lebar)
-                    let rect = cv.minAreaRect(cnt);
-                    let vertices = cv.RotatedRect.points(rect);
-                    let side1 = Math.hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y);
-                    let side2 = Math.hypot(vertices[1].x - vertices[2].x, vertices[1].y - vertices[2].y);
-                    
-                    let pjgPx = Math.max(side1, side2);
-                    let lbrPx = Math.min(side1, side2);
+                    // 2. Analisis Geometri & Bentuk
+                    let perimeter = cv.arcLength(cnt, true);
+                    if (perimeter > 0) {
+                        // Rumus Circularity untuk menentukan lingkaran
+                        let circularity = (4 * Math.PI * largestArea) / (perimeter * perimeter);
+                        let isCircle = circularity > 0.82; // Toleransi 0.82 untuk garis Canny yang agak kasar
 
-                    // B. Lingkaran Pembungkus (Diameter & Radius)
-                    let circle = cv.minEnclosingCircle(cnt);
-                    let diaPx = circle.radius * 2;
+                        // Hitung Kotak (Untuk Panjang Lebar)
+                        let rect = cv.minAreaRect(cnt);
+                        let vertices = cv.RotatedRect.points(rect);
+                        let side1 = Math.hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y);
+                        let side2 = Math.hypot(vertices[1].x - vertices[2].x, vertices[1].y - vertices[2].y);
+                        let pjgPx = Math.max(side1, side2);
+                        let lbrPx = Math.min(side1, side2);
 
-                    // C. Deteksi Chamfer (Poligon Approximation)
-                    let approx = new cv.Mat();
-                    cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
-                    let vertexCount = approx.rows;
-                    let isChamfered = (vertexCount >= 5 && vertexCount <= 8);
-                    approx.delete();
+                        // Hitung Lingkaran (Untuk Diameter Radius)
+                        let circle = cv.minEnclosingCircle(cnt);
+                        let diaPx = circle.radius * 2;
 
-                    // --- KALIBRASI OTOMATIS ---
-                    // Jika belum kalibrasi, asumsikan objek terbesar pertama adalah referensi (85.6 mm)
-                    if (ppm === null) {
-                        ppm = pjgPx / 85.6; 
-                        document.getElementById('status').innerText = "✅ Skala Terkalibrasi! Singkirkan referensi dan ukur target.";
-                    }
+                        // Deteksi Chamfer (Aproksimasi Poligon)
+                        let approx = new cv.Mat();
+                        let epsilon = 0.015 * perimeter; // Dipertajam: 1.5% dari keliling
+                        cv.approxPolyDP(cnt, approx, epsilon, true);
+                        let vCount = approx.rows;
+                        // Jika bukan lingkaran, dan titik sudut ada 5 sampai 8, berarti ujungnya terpotong (Chamfer)
+                        let isChamfered = (!isCircle && vCount >= 5 && vCount <= 8);
+                        approx.delete();
 
-                    // --- KONVERSI PIKSEL KE MILIMETER ---
-                    let pjgMm = (pjgPx / ppm).toFixed(3);
-                    let lbrMm = (lbrPx / ppm).toFixed(3);
-                    let diaMm = (diaPx / ppm).toFixed(3);
-                    let radMm = (circle.radius / ppm).toFixed(3);
-
-                    // --- UPDATE UI TEXT ---
-                    // Cek apakah benda lebih mendekati lingkaran atau persegi
-                    let circleArea = Math.PI * Math.pow(circle.radius, 2);
-                    let isCircle = (largestArea / circleArea) > 0.75;
-
-                    if (isCircle) {
-                        document.getElementById('val-d').innerText = diaMm;
-                        document.getElementById('val-r').innerText = radMm;
-                        document.getElementById('val-p').innerText = "-";
-                        document.getElementById('val-l').innerText = "-";
-                        cv.circle(edge, circle.center, circle.radius, [255, 255, 255, 255], 2);
-                    } else {
-                        document.getElementById('val-p').innerText = pjgMm;
-                        document.getElementById('val-l').innerText = lbrMm;
-                        document.getElementById('val-d').innerText = "-";
-                        document.getElementById('val-r').innerText = "-";
-                        for (let j = 0; j < 4; j++) {
-                            cv.line(edge, vertices[j], vertices[(j + 1) % 4], [255, 255, 255, 255], 2);
+                        // --- KALIBRASI OTOMATIS ---
+                        if (ppm === null) {
+                            ppm = pjgPx / 85.6; 
+                            document.getElementById('status').innerText = "✅ Skala Terkalibrasi! Singkirkan referensi dan ukur target.";
                         }
-                    }
 
-                    if (isChamfered && !isCircle) {
-                        document.getElementById('val-c').innerText = "Terdeteksi (" + vertexCount + " titik)";
-                        document.getElementById('val-c').style.color = "#00ff00";
-                    } else {
-                        document.getElementById('val-c').innerText = "Tidak Terdeteksi";
-                        document.getElementById('val-c').style.color = "#ffaa00";
+                        // --- KONVERSI & TAMPILKAN HASIL ---
+                        let pjgMm = (pjgPx / ppm).toFixed(3);
+                        let lbrMm = (lbrPx / ppm).toFixed(3);
+                        let diaMm = (diaPx / ppm).toFixed(3);
+                        let radMm = (circle.radius / ppm).toFixed(3);
+
+                        let shapeText = "";
+
+                        if (isCircle) {
+                            shapeText = "Terdeteksi: Benda Lingkaran / Silinder";
+                            document.getElementById('val-d').innerText = diaMm;
+                            document.getElementById('val-r').innerText = radMm;
+                            document.getElementById('val-p').innerText = "-";
+                            document.getElementById('val-l').innerText = "-";
+                            document.getElementById('val-c').innerText = "Tidak Berlaku";
+                            document.getElementById('val-c').style.color = "#888";
+                            
+                            // Gambar lingkaran di layar
+                            cv.circle(edge, circle.center, circle.radius, [255, 255, 255, 255], 2);
+                        } else {
+                            shapeText = "Terdeteksi: Benda Persegi / Balok";
+                            document.getElementById('val-p').innerText = pjgMm;
+                            document.getElementById('val-l').innerText = lbrMm;
+                            document.getElementById('val-d').innerText = "-";
+                            document.getElementById('val-r').innerText = "-";
+                            
+                            // Gambar garis kotak di layar
+                            for (let j = 0; j < 4; j++) {
+                                let p1 = new cv.Point(vertices[j].x, vertices[j].y);
+                                let p2 = new cv.Point(vertices[(j + 1) % 4].x, vertices[(j + 1) % 4].y);
+                                cv.line(edge, p1, p2, [255, 255, 255, 255], 2);
+                            }
+
+                            if (isChamfered) {
+                                shapeText += " (Dengan Chamfer)";
+                                document.getElementById('val-c').innerText = "Terdeteksi (" + vCount + " Sudut)";
+                                document.getElementById('val-c').style.color = "#00ff00";
+                            } else {
+                                document.getElementById('val-c').innerText = "Tidak Terdeteksi (Sudut Tajam)";
+                                document.getElementById('val-c').style.color = "#ffaa00";
+                            }
+                        }
+                        
+                        document.getElementById('shape-type').innerText = shapeText;
                     }
                 }
 
-                // Tampilkan hasil pemrosesan visual ke Canvas
                 cv.imshow('canvasOutput', edge);
-                
-                // Looping frame selanjutnya
                 requestAnimationFrame(processFrame);
             } catch (err) {
-                console.error("Frame processing error: ", err);
+                console.error("Frame error:", err);
                 requestAnimationFrame(processFrame);
             }
         }
