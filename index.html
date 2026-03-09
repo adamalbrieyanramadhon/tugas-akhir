@@ -3,97 +3,169 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High Precision Measure Tool</title>
+    <title>Real-Time VMM Scanner</title>
     <script async src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: #eee; margin: 0; }
-        .container { padding: 15px; }
-        video, canvas { width: 100%; max-width: 600px; border: 2px solid #00ff00; border-radius: 5px; }
-        .panel { background: #333; padding: 15px; margin: 10px auto; max-width: 580px; border-radius: 10px; }
-        input { padding: 8px; width: 80px; border-radius: 4px; border: none; }
-        button { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        #result { font-size: 1.5em; color: #00ff00; margin-top: 10px; font-family: 'Courier New', Courier, monospace; }
+        body { background-color: #121212; color: #00ff00; font-family: 'Courier New', Courier, monospace; text-align: center; margin: 0; padding: 20px; }
+        canvas { border: 2px solid #00ff00; background-color: #000; max-width: 100%; border-radius: 5px; box-shadow: 0 0 15px rgba(0, 255, 0, 0.3); }
+        .panel { background: #222; padding: 15px; margin-bottom: 20px; border-radius: 8px; display: inline-block; border: 1px solid #333; }
+        button { background: #00ff00; color: #000; border: none; padding: 10px 15px; cursor: pointer; font-weight: bold; border-radius: 4px; margin: 5px; transition: 0.2s; }
+        button:hover { background: #00cc00; }
+        input { padding: 5px; width: 80px; text-align: center; background: #111; color: #00ff00; border: 1px solid #00ff00; }
+        .status-box { margin-top: 10px; font-size: 0.9em; color: #aaa; }
     </style>
 </head>
 <body>
-
-<div class="container">
-    <h2>🛠️ Mechanical Precision Measure</h2>
-    
+    <h2>⚡ Real-Time Auto Measure</h2>
     <div class="panel">
-        <label>Ukuran Referensi (mm): </label>
-        <input type="number" id="refSize" value="85.600" step="0.001">
-        <p style="font-size: 0.8em;">*Gunakan KTP (85.6) atau Gage Block untuk kalibrasi</p>
+        <div>
+            <label>Ukuran Benda Referensi (mm): </label>
+            <input type="number" id="refSize" value="85.600" step="0.001">
+        </div>
+        <br>
+        <button id="btnCalibrate">1. Kunci Kalibrasi (Set Skala)</button>
+        <button id="btnReset" style="background: #ff4444; color: white;">Reset</button>
+        <div class="status-box" id="status">Status: Menunggu Engine Computer Vision...</div>
+        <div class="status-box" id="ppmDisplay" style="color: #00ff00; font-weight: bold;">Pixels Per mm (PPM): 0</div>
     </div>
-
-    <video id="videoInput" autoplay playsinline></video>
-    <canvas id="canvasOutput" style="display:none;"></canvas>
-
-    <div id="result">Hasil: 0.000 mm</div>
-
-    <div class="panel">
-        <button id="calibrateBtn">1. Kalibrasi</button>
-        <button id="measureBtn" style="background:#007bff">2. Ukur Benda Kerja</button>
-    </div>
+    <br>
     
-    <p id="status">Memuat Engine...</p>
-</div>
+    <video id="videoInput" width="640" height="480" style="display:none;" autoplay playsinline></video>
+    <canvas id="canvasOutput" width="640" height="480"></canvas>
 
-<script>
-    let ppm = 0; // Pixels Per Millimeter
-    const video = document.getElementById('videoInput');
-    const canvas = document.getElementById('canvasOutput');
-    const status = document.getElementById('status');
-    const resultDiv = document.getElementById('result');
+    <script>
+        let video = document.getElementById('videoInput');
+        let canvas = document.getElementById('canvasOutput');
+        let status = document.getElementById('status');
+        let ppm = 0;
+        let streaming = false;
+        let src, dst, gray, edges, contours, hierarchy, cap;
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", focusMode: "continuous" } })
-        .then(s => video.srcObject = s);
+        // Akses Kamera Resolusi Tinggi
+        navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 }, focusMode: "continuous" }, 
+            audio: false 
+        })
+        .then(function(stream) {
+            video.srcObject = stream;
+            video.play();
+        })
+        .catch(function(err) {
+            status.innerHTML = "❌ Gagal akses kamera. Pastikan izin diberikan.";
+        });
 
-    function processImage() {
-        let src = cv.imread(video);
-        let gray = new cv.Mat();
-        let thresh = new cv.Mat();
-        let contours = new cv.PolyVector();
-        let hierarchy = new cv.Mat();
-
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-        cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-        return { src, contours, thresh };
-    }
-
-    document.getElementById('calibrateBtn').onclick = () => {
-        let { contours } = processImage();
-        if (contours.size() > 0) {
-            let cnt = contours.get(0); // Ambil kontur terbesar
-            let rect = cv.minAreaRect(cnt);
-            let pixelDim = Math.max(rect.size.width, rect.size.height);
-            let realDim = parseFloat(document.getElementById('refSize').value);
+        function onOpenCvReady() {
+            status.innerHTML = "✅ Engine Siap. Letakkan benda referensi lalu klik Kalibrasi.";
             
-            ppm = pixelDim / realDim;
-            status.innerText = `Kalibrasi Berhasil! PPM: ${ppm.toFixed(4)}`;
+            // Inisialisasi Matriks OpenCV
+            src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+            dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+            gray = new cv.Mat();
+            edges = new cv.Mat();
+            contours = new cv.MatVector();
+            hierarchy = new cv.Mat();
+            cap = new cv.VideoCapture(video);
+            
+            // Mulai Looping Real-Time
+            streaming = true;
+            requestAnimationFrame(processVideo);
         }
-    };
 
-    document.getElementById('measureBtn').onclick = () => {
-        if (ppm === 0) {
-            alert("Lakukan kalibrasi terlebih dahulu!");
-            return;
+        // Fungsi Looping Pemrosesan Frame
+        function processVideo() {
+            if (!streaming) return;
+            try {
+                cap.read(src);
+                src.copyTo(dst);
+                
+                // Konversi ke hitam putih dan deteksi tepi (Canny)
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+                cv.Canny(gray, edges, 40, 120, 3, false);
+                cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    
+                    if (area > 1500) { // Filter agar debu/titik kecil tidak terdeteksi
+                        let rect = cv.minAreaRect(cnt);
+                        let box = cv.RotatedRect.points(rect);
+                        
+                        // Gambar garis pembatas objek (Bounding Box)
+                        let vertices = new cv.MatVector();
+                        let matObj = cv.matFromArray(4, 1, cv.CV_32SC2, [
+                            box[0].x, box[0].y, box[1].x, box[1].y,
+                            box[2].x, box[2].y, box[3].x, box[3].y
+                        ]);
+                        vertices.push_back(matObj);
+                        cv.polylines(dst, vertices, true, new cv.Scalar(0, 255, 0, 255), 2);
+                        matObj.delete(); vertices.delete();
+
+                        // Hitung dan tampilkan ukuran secara real-time JIKA sudah dikalibrasi
+                        if (ppm > 0) {
+                            let w = (rect.size.width / ppm).toFixed(3);
+                            let h = (rect.size.height / ppm).toFixed(3);
+                            let text = `${w} x ${h} mm`;
+                            
+                            // Letakkan teks ukuran di atas objek
+                            cv.putText(dst, text, new cv.Point(box[1].x, box[1].y - 15), cv.FONT_HERSHEY_SIMPLEX, 0.7, new cv.Scalar(0, 255, 0, 255), 2);
+                        }
+                    }
+                }
+                
+                // Tampilkan ke layar
+                cv.imshow('canvasOutput', dst);
+                requestAnimationFrame(processVideo); // Loop kembali secepat mungkin
+            } catch (err) {
+                console.error(err);
+            }
         }
-        let { contours } = processImage();
-        if (contours.size() > 1) {
-            let cnt = contours.get(1); // Ambil kontur benda kedua
-            let rect = cv.minAreaRect(cnt);
-            let widthMM = Math.max(rect.size.width, rect.size.height) / ppm;
-            resultDiv.innerText = `Hasil: ${widthMM.toFixed(3)} mm`;
-        }
-    };
 
-    function onOpenCvReady() { status.innerText = "Sistem Siap."; }
-    setTimeout(() => { if(typeof cv !== 'undefined') onOpenCvReady(); }, 2000);
-</script>
+        // Logika Tombol Kalibrasi
+        document.getElementById('btnCalibrate').addEventListener('click', () => {
+            if (contours && contours.size() > 0) {
+                let maxArea = 0;
+                let maxCnt = null;
+                
+                // Cari objek paling besar di layar sebagai referensi
+                for (let i = 0; i < contours.size(); i++) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    if (area > maxArea) {
+                        maxArea = area;
+                        maxCnt = cnt;
+                    }
+                }
+                
+                if (maxCnt) {
+                    let rect = cv.minAreaRect(maxCnt);
+                    let pixelDim = Math.max(rect.size.width, rect.size.height);
+                    let realDim = parseFloat(document.getElementById('refSize').value);
+                    
+                    ppm = pixelDim / realDim; // Simpan Rasio Skala
+                    document.getElementById('ppmDisplay').innerHTML = `Pixels Per mm (PPM): ${ppm.toFixed(5)}`;
+                    status.innerHTML = "✅ Kalibrasi Terkunci. Singkirkan benda referensi dan letakkan benda kerja!";
+                }
+            } else {
+                alert("Benda referensi tidak terdeteksi di kamera!");
+            }
+        });
 
+        // Logika Reset
+        document.getElementById('btnReset').addEventListener('click', () => {
+            ppm = 0;
+            document.getElementById('ppmDisplay').innerHTML = `Pixels Per mm (PPM): 0`;
+            status.innerHTML = "🔄 Reset berhasil. Silakan kalibrasi ulang.";
+        });
+
+        // Loop untuk mengecek apakah library OpenCV sudah selesai diunduh oleh browser
+        let checkOpenCV = setInterval(() => {
+            if (typeof cv !== 'undefined' && cv.Mat) {
+                clearInterval(checkOpenCV);
+                onOpenCvReady();
+            }
+        }, 500);
+    </script>
 </body>
 </html>
