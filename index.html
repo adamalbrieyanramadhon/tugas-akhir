@@ -3,159 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Precision Measure 0.001</title>
+    <title>Sistem Ukur Presisi Black & White</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: white; text-align: center; margin: 0; overflow-x: hidden; }
-        .container { position: relative; display: inline-block; margin-top: 20px; box-shadow: 0 0 20px rgba(0,255,0,0.2); border-radius: 10px; overflow: hidden; }
-        video, canvas { display: block; }
-        canvas { position: absolute; top: 0; left: 0; }
-        .ui-panel { background: #1e1e1e; padding: 20px; margin-top: 10px; border-top: 3px solid #00ff00; }
-        .data-display { font-size: 24px; color: #00ff00; font-weight: bold; margin: 10px 0; }
-        button { padding: 12px 25px; font-size: 16px; cursor: pointer; background: #00ff00; border: none; border-radius: 5px; font-weight: bold; transition: 0.3s; }
-        button:disabled { background: #444; cursor: not-allowed; }
-        button:hover:not(:disabled) { background: #00cc00; }
-        .info { font-size: 12px; color: #aaa; margin-top: 10px; }
+        body { font-family: sans-serif; background: #000; color: #0f0; text-align: center; margin: 0; }
+        .container { position: relative; width: 100%; max-width: 640px; margin: auto; }
+        /* Sembunyikan video asli agar tidak menumpuk */
+        video { display: none; } 
+        /* Tampilkan hanya hasil olahan OpenCV */
+        canvas { width: 100%; border: 1px solid #333; }
+        .panel { background: #111; padding: 15px; border-top: 2px solid #0f0; position: fixed; bottom: 0; width: 100%; }
+        .measure-val { font-size: 32px; font-family: monospace; }
+        button { padding: 10px 20px; background: #0f0; border: none; font-weight: bold; border-radius: 5px; }
     </style>
 </head>
 <body>
 
-    <h2>Sistem Pengukuran Otomatis</h2>
+    <h3 style="margin: 10px;">PRECISE MEASURE (B&W MODE)</h3>
     
     <div class="container">
         <video id="videoInput" width="640" height="480" autoplay muted playsinline></video>
         <canvas id="canvasOutput" width="640" height="480"></canvas>
     </div>
 
-    <div class="ui-panel">
-        <div id="status">⏳ Memuat AI Engine (OpenCV)...</div>
-        <div class="data-display" id="measureResult">N/A mm</div>
-        <button id="startBtn" disabled onclick="startApp()">AKTIFKAN KAMERA</button>
-        <button onclick="resetCalibration()" style="background:#ff4444; color:white;">RESET SKALA</button>
-        
-        <div class="info">
-            * Letakkan kartu ATM (85.6mm) sebagai referensi pertama untuk kalibrasi.
-        </div>
+    <div class="panel">
+        <div id="status">Memuat Engine...</div>
+        <div class="measure-val" id="result">0.000 mm</div>
+        <button id="startBtn" onclick="initApp()" disabled>MULAI SCAN</button>
+        <button onclick="location.reload()" style="background:#555; color:#fff;">RESET</button>
     </div>
 
-    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="cvReady()"></script>
 
     <script>
         let video = document.getElementById('videoInput');
-        let canvas = document.getElementById('canvasOutput');
-        let statusText = document.getElementById('status');
-        let measureDisplay = document.getElementById('measureResult');
-        
-        let src, dst, gray, thresh, contours, hierarchy;
-        let cap;
-        let pixelsPerMetric = null;
+        let resultDiv = document.getElementById('result');
+        let ppm = null; // Pixels Per Metric
 
-        function onOpenCvReady() {
-            statusText.innerText = "Sistem Siap. Klik tombol di bawah.";
+        function cvReady() {
+            document.getElementById('status').innerText = "Engine Siap!";
             document.getElementById('startBtn').disabled = false;
         }
 
-        async function startApp() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: 640, height: 480 } 
-                });
-                video.srcObject = stream;
-                video.play();
-                statusText.innerText = "Mencari Objek Referensi...";
-                
-                // Inisialisasi Matriks OpenCV
-                src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-                dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-                gray = new cv.Mat();
-                thresh = new cv.Mat();
-                contours = new cv.MatVector();
-                hierarchy = new cv.Mat();
-                cap = new cv.VideoCapture(video);
-
-                requestAnimationFrame(processFrame);
-            } catch (err) {
-                statusText.innerText = "Error: Kamera tidak diizinkan.";
-                console.error(err);
-            }
+        async function initApp() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: 640, height: 480 } 
+            });
+            video.srcObject = stream;
+            video.play();
+            process();
         }
 
-        function resetCalibration() {
-            pixelsPerMetric = null;
-            statusText.innerText = "Skala direset. Gunakan kartu referensi lagi.";
-        }
+        function process() {
+            let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+            let gray = new cv.Mat();
+            let thresh = new cv.Mat();
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            let cap = new cv.VideoCapture(video);
 
-function processFrame() {
-    try {
-        cap.read(src);
-        
-        // 1. Ubah ke Grayscale (Hitam Putih Abu-abu)
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        
-        // 2. Tambahkan Blur untuk mengurangi noise piksel
-        cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-        
-        // 3. Thresholding (Mengubah menjadi Hitam Putih Tegas/Biner)
-        // Objek akan jadi Putih, Background jadi Hitam
-        cv.threshold(gray, thresh, 100, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-
-        // --- Logika Pengukuran Tetap Sama ---
-        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-        
-        // Loop Kontur (seperti kode sebelumnya...)
-        // ... (kode pengukuran Anda di sini) ...
-
-        // 4. TAMPILKAN HASIL HITAM PUTIH KE LAYAR
-        // Ganti 'dst' menjadi 'thresh' jika ingin hitam putih tegas
-        // Ganti 'dst' menjadi 'gray' jika ingin hitam putih abu-abu (lebih halus)
-        cv.imshow('canvasOutput', thresh); 
-
-        requestAnimationFrame(processFrame);
-    } catch (err) {
-        requestAnimationFrame(processFrame);
-    }
-}
-
-                for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
+            function frame() {
+                try {
+                    cap.read(src);
                     
-                    if (area < 5000) continue; // Filter noise kecil
+                    // PROSES HITAM PUTIH (B&W)
+                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY); // Menjadi Abu-abu
+                    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+                    // Threshold membuat gambar jadi HITAM TEGAS dan PUTIH TEGAS (Biner)
+                    cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
-                    let rect = cv.minAreaRect(cnt);
-                    let vertices = cv.RotatedRect.points(rect);
-                    
-                    // Gambar Kotak
-                    for (let j = 0; j < 4; j++) {
-                        let p1 = new cv.Point(vertices[j].x, vertices[j].y);
-                        let p2 = new cv.Point(vertices[(j + 1) % 4].x, vertices[(j + 1) % 4].y);
-                        cv.line(dst, p1, p2, [0, 255, 0, 255], 2);
+                    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                    for (let i = 0; i < contours.size(); ++i) {
+                        let cnt = contours.get(i);
+                        if (cv.contourArea(cnt) < 3000) continue;
+
+                        let rect = cv.minAreaRect(cnt);
+                        let vertices = cv.RotatedRect.points(rect);
+                        
+                        // Gambar garis di atas gambar Hitam Putih
+                        for (let j = 0; j < 4; j++) {
+                            cv.line(thresh, vertices[j], vertices[(j + 1) % 4], [255, 255, 255, 255], 2);
+                        }
+
+                        let distPx = Math.hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y);
+
+                        // Kalibrasi otomatis menggunakan Kartu ATM (85.6mm)
+                        if (ppm === null) ppm = distPx / 85.6;
+
+                        let mm = (distPx / ppm).toFixed(3);
+                        resultDiv.innerText = mm + " mm";
                     }
 
-                    // Hitung Lebar dalam Piksel (Euclidean Distance)
-                    let dx = vertices[0].x - vertices[1].x;
-                    let dy = vertices[0].y - vertices[1].y;
-                    let widthPx = Math.sqrt(dx*dx + dy*dy);
-
-                    // LOGIKA KALIBRASI OTOMATIS
-                    if (pixelsPerMetric === null) {
-                        let REFERENSI_MM = 85.6; // Standar kartu kredit/ID
-                        pixelsPerMetric = widthPx / REFERENSI_MM;
-                        statusText.innerText = "✅ Terkalibrasi!";
-                    }
-
-                    let realWidth = (widthPx / pixelsPerMetric).toFixed(3);
-                    measureDisplay.innerText = realWidth + " mm";
-                    
-                    cv.putText(dst, realWidth + "mm", new cv.Point(rect.center.x - 30, rect.center.y), 
-                               cv.FONT_HERSHEY_SIMPLEX, 0.7, [0, 255, 0, 255], 2);
+                    cv.imshow('canvasOutput', thresh); // Tampilkan hasil Hitam Putih
+                    requestAnimationFrame(frame);
+                } catch (e) {
+                    console.log(e);
+                    requestAnimationFrame(frame);
                 }
-
-                cv.imshow('canvasOutput', dst);
-                requestAnimationFrame(processFrame);
-            } catch (err) {
-                console.log("Frame error, mengabaikan...");
-                requestAnimationFrame(processFrame);
             }
+            frame();
         }
     </script>
 </body>
